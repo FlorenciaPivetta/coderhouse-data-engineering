@@ -1,0 +1,35 @@
+
+# Terraform: estado y archivos locales
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Variables que pueden contener secretos
+*.tfvars
+*.tfvars.json
+*.auto.tfvars
+*.auto.tfvars.json
+
+# Overrides locales
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Configuracion local de Terraform
+.terraformrc
+terraform.rc
+
+# Credenciales locales de AWS
+.aws/
+credentials
+config.local
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+tfplan
+*.plan
