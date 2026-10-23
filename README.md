@@ -114,3 +114,39 @@ En la última revisión del plan se identificaron siete recursos por crear y una
 La creación y validación real de los recursos de Kinesis, Firehose y CloudWatch, así como la entrega de registros en S3, quedan pendientes de resolver el bloqueo de acceso a Kinesis en la cuenta de AWS.
 
 No considerar las pruebas locales como evidencia de entrega efectiva en AWS.
+
+## Prueba de ingesta real en AWS
+
+La prueba de extremo a extremo está pendiente de que la cuenta tenga habilitado el acceso a Kinesis. Los siguientes comandos documentan el procedimiento que se ejecutará cuando el servicio esté disponible; todavía no constituyen evidencia de una entrega real.
+
+### Enviar un evento de prueba
+
+Crear un archivo `event.json` con este contenido:
+
+```json
+{
+  "event_id": "test-001",
+  "event_type": "view",
+  "user_id": "user-test-001",
+  "event_time": "2026-10-23T00:00:00Z",
+  "amount": 10.5
+}
+```
+
+Enviar el evento al stream:
+
+```powershell
+aws kinesis put-record --stream-name dev-data-stream --partition-key "user-test-001" --data fileb://event.json --region us-east-1 --profile terraform-dev
+```
+
+### Verificar la entrega en S3
+
+Cuando Firehose haya entregado el archivo, listar los objetos del bucket configurado:
+
+```powershell
+aws s3 ls s3://NOMBRE-DEL-BUCKET/PREFIJO/ --recursive --region us-east-1 --profile terraform-dev
+```
+
+Reemplazar `NOMBRE-DEL-BUCKET` y `PREFIJO` por los valores reales del bucket y del prefijo de datos configurados en Terraform.
+
+La evidencia final deberá incluir la salida real del comando `aws s3 ls` donde se vea el objeto entregado por Firehose, o una captura equivalente de la consola de S3.
