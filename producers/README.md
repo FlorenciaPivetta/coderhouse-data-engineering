@@ -1,4 +1,4 @@
-﻿# Kinesis Event Producer
+# Kinesis Event Producer
 
 Python producer for sending sample JSON events to an Amazon Kinesis Data Stream.
 
@@ -21,10 +21,10 @@ If Python is installed but not available as `python`, use its full executable pa
 
 ## Local test (no AWS calls)
 
-Generate five sample events and display their partition keys:
+Generate 100 sample events and display their partition keys:
 
 ```powershell
-python .\producers\producer.py --dry-run --count 5
+python .\producers\producer.py --dry-run --count 100
 ```
 
 The dry-run mode generates events locally and does not send records to AWS.
@@ -48,7 +48,7 @@ python .\producers\producer.py --stream dev-data-stream --region us-east-1 --pro
 | `--interval` | Delay between sends, in seconds | `0.5` |
 | `--dry-run` | Generate events without calling AWS | Disabled |
 
-Each event includes an ID, event type, user ID, UTC timestamp, and sample amount. Partition keys are selected from `web`, `mobile`, `api`, `store`, and `campaign`.
+Each event includes an ID, event type, user ID, UTC timestamp, and sample amount. The producer generates a UUID-based user ID and uses it as the PartitionKey to provide high-cardinality keys and reduce the risk of hot shards. The local dry-run validates event generation and key uniqueness; actual shard distribution must be verified in AWS CloudWatch.
 
 ## Validation status
 

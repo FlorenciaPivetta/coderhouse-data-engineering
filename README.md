@@ -1,4 +1,4 @@
-﻿# CoderHouse Data Engineering
+# CoderHouse Data Engineering
 
 ## Objetivo
 
@@ -105,7 +105,7 @@ terraform -chdir=environments/dev output
 
 - La configuración de Terraform fue validada mediante `terraform validate`.
 - El productor Python pasó la comprobación de sintaxis mediante `py_compile`.
-- El modo `--dry-run` generó cinco eventos JSON de prueba y utilizó cinco claves de partición distintas, sin realizar llamadas a AWS.
+- El modo `--dry-run` generó 100 eventos JSON de prueba y utilizó 100 claves de partición distintas, sin realizar llamadas a AWS.
 
 ### Estado del despliegue
 

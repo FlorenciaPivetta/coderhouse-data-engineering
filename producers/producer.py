@@ -10,18 +10,21 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 
-PARTITION_KEYS = ["web", "mobile", "api", "store", "campaign"]
-
-
 def build_record():
-    """Genera un evento de ejemplo para la ingesta."""
-    return {
+    """Genera un evento de ejemplo y una clave de partición."""
+    user_id = f"user_{uuid.uuid4().hex}"
+
+    record = {
         "event_id": str(uuid.uuid4()),
         "event_type": random.choice(["click", "purchase", "view", "signup"]),
-        "user_id": f"user_{random.randint(1, 1000):04d}",
+        "user_id": user_id,
         "event_time": datetime.now(timezone.utc).isoformat(),
         "amount": round(random.uniform(1, 500), 2),
     }
+
+    # Clave de alta cardinalidad para reducir el riesgo de hot shards.
+    partition_key = user_id
+    return record, partition_key
 
 
 def main():
@@ -58,7 +61,7 @@ def main():
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Genera y muestra eventos localmente, sin llamar a AWS.",
+        help="Genera eventos localmente sin llamar a AWS.",
     )
     args = parser.parse_args()
 
@@ -78,21 +81,14 @@ def main():
     used_keys = set()
     sent = 0
 
+    mode = "Modo local" if args.dry_run else "Envío a AWS"
     print(
-        f"{'Modo local' if args.dry_run else 'Envío a AWS'}: "
-        f"{args.count} eventos | stream={args.stream} | región={args.region}"
+        f"{mode}: {args.count} eventos | "
+        f"stream={args.stream} | región={args.region}"
     )
 
     for index in range(args.count):
-        record = build_record()
-
-        # En la prueba local, recorremos las claves para comprobar
-        # que se utilicen varias. En AWS, elegimos una clave al azar.
-        if args.dry_run:
-            partition_key = PARTITION_KEYS[index % len(PARTITION_KEYS)]
-        else:
-            partition_key = random.choice(PARTITION_KEYS)
-
+        record, partition_key = build_record()
         used_keys.add(partition_key)
 
         if args.dry_run:
@@ -109,10 +105,7 @@ def main():
                     PartitionKey=partition_key,
                 )
                 sent += 1
-                print(
-                    f"[OK] Evento {sent}/{args.count} "
-                    f"| partición={partition_key}"
-                )
+                print(f"[OK] Evento {sent}/{args.count} enviado")
             except (BotoCoreError, ClientError) as exc:
                 print(f"[ERROR] No se pudo enviar el evento: {exc}")
                 raise SystemExit(1)
@@ -122,8 +115,8 @@ def main():
 
     if args.dry_run:
         print(
-            f"Prueba local finalizada: {args.count} eventos generados. "
-            f"Claves utilizadas: {', '.join(sorted(used_keys))}"
+            f"Prueba local finalizada: {args.count} eventos generados; "
+            f"{len(used_keys)} claves de partición únicas."
         )
     else:
         print(f"Finalizado: {sent} eventos enviados correctamente.")
