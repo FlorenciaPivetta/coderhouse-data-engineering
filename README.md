@@ -101,6 +101,16 @@ terraform -chdir=environments/dev output
 
 ## Validación
 
-La configuración de Terraform fue validada mediante `terraform validate`.
+### Validaciones locales
 
-En la última revisión del plan se identificaron siete recursos por crear y una política IAM por actualizar, sin recursos por destruir. Por lo tanto, ese plan todavía contempla cambios pendientes y no representa una infraestructura completamente sincronizada con el código actual.
+- La configuración de Terraform fue validada mediante `terraform validate`.
+- El productor Python pasó la comprobación de sintaxis mediante `py_compile`.
+- El modo `--dry-run` generó cinco eventos JSON de prueba y utilizó cinco claves de partición distintas, sin realizar llamadas a AWS.
+
+### Estado del despliegue
+
+En la última revisión del plan se identificaron siete recursos por crear y una política IAM por actualizar, sin recursos por destruir. El plan todavía contempla cambios pendientes y no representa una infraestructura completamente sincronizada con el código actual.
+
+La creación y validación real de los recursos de Kinesis, Firehose y CloudWatch, así como la entrega de registros en S3, quedan pendientes de resolver el bloqueo de acceso a Kinesis en la cuenta de AWS.
+
+No considerar las pruebas locales como evidencia de entrega efectiva en AWS.
