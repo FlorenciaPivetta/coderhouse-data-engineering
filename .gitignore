@@ -33,3 +33,11 @@ Thumbs.db
 
 tfplan
 *.plan
+
+# Python: archivos temporales y entornos virtuales
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.env
