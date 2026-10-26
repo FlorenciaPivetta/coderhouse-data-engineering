@@ -33,3 +33,12 @@ Thumbs.db
 
 tfplan
 *.plan
+
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Evidencia local de ejecucion
+spark-evidence.log
+
