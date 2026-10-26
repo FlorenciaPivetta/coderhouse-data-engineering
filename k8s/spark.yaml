@@ -1,0 +1,66 @@
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-streaming
+  namespace: urban-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spark-streaming
+  template:
+    metadata:
+      labels:
+        app: spark-streaming
+    spec:
+      containers:
+        - name: spark
+          image: apache/spark:3.5.5
+          workingDir: /opt/spark
+          command: ["/bin/bash", "-c"]
+          args:
+            - >
+              /opt/spark/bin/spark-submit
+              --master local[*]
+              --conf spark.jars.ivy=/tmp/.ivy2
+              --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.5
+              /app/streaming_job.py
+          env:
+            - name: HOME
+              value: /tmp
+            - name: SPARK_LOCAL_DIRS
+              value: /tmp/spark
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: kafka-config
+                  key: KAFKA_BOOTSTRAP_SERVERS
+            - name: KAFKA_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: spark-config
+                  key: KAFKA_TOPIC
+            - name: SPARK_WINDOW_DURATION
+              valueFrom:
+                configMapKeyRef:
+                  name: spark-config
+                  key: SPARK_WINDOW_DURATION
+            - name: SPARK_WATERMARK_DELAY
+              valueFrom:
+                configMapKeyRef:
+                  name: spark-config
+                  key: SPARK_WATERMARK_DELAY
+            - name: SPARK_CHECKPOINT_LOCATION
+              valueFrom:
+                configMapKeyRef:
+                  name: spark-config
+                  key: SPARK_CHECKPOINT_LOCATION
+          volumeMounts:
+            - name: spark-code
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: spark-code
+          configMap:
+            name: spark-code
