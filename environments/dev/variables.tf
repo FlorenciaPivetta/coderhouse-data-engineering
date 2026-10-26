@@ -1,6 +1,6 @@
 
 variable "aws_region" {
-  description = "Region de AWS donde se desplegara la infraestructura"
+  description = "Región de AWS donde se desplegará la infraestructura"
   type        = string
   default     = "us-east-1"
 }
@@ -39,3 +39,4 @@ variable "audit_principal_arn" {
   description = "ARN del principal autorizado a asumir el rol de auditoría"
   type        = string
 }
+
