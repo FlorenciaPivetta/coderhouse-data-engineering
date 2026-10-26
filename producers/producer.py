@@ -1,4 +1,4 @@
-﻿import argparse
+import argparse
 import json
 import os
 import random
@@ -43,7 +43,7 @@ def main():
     )
     parser.add_argument(
         "--profile",
-        default=os.getenv("AWS_PROFILE", "terraform-dev"),
+        default=os.getenv("AWS_PROFILE", "default"),
         help="Perfil de AWS CLI.",
     )
     parser.add_argument(

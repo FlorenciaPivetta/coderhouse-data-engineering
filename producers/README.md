@@ -14,7 +14,7 @@ Python producer for sending sample JSON events to an Amazon Kinesis Data Stream.
 From the repository root:
 
 ```powershell
-python -m pip install -r .\producers\requirements.txt
+py -m pip install -r .\producers\requirements.txt
 ```
 
 If Python is installed but not available as `python`, use its full executable path.
@@ -24,7 +24,7 @@ If Python is installed but not available as `python`, use its full executable pa
 Generate 100 sample events and display their partition keys:
 
 ```powershell
-python .\producers\producer.py --dry-run --count 100
+py .\producers\producer.py --dry-run --count 100
 ```
 
 The dry-run mode generates events locally and does not send records to AWS.
@@ -34,7 +34,7 @@ The dry-run mode generates events locally and does not send records to AWS.
 After the stream is available and AWS permissions are configured:
 
 ```powershell
-python .\producers\producer.py --stream dev-data-stream --region us-east-1 --profile terraform-dev --count 10 --interval 0.5
+py .\producers\producer.py --stream dev-data-stream --region us-east-1 --profile default --count 100 --interval 0.5
 ```
 
 ## Options
@@ -43,7 +43,7 @@ python .\producers\producer.py --stream dev-data-stream --region us-east-1 --pro
 |---|---|---|
 | `--stream` | Kinesis stream name | `dev-data-stream` |
 | `--region` | AWS region | `us-east-1` |
-| `--profile` | AWS CLI profile | `terraform-dev` |
+| `--profile` | AWS CLI profile | `default` |
 | `--count` | Number of events | `10` |
 | `--interval` | Delay between sends, in seconds | `0.5` |
 | `--dry-run` | Generate events without calling AWS | Disabled |
