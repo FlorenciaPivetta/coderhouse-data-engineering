@@ -1,7 +1,7 @@
 ﻿
 # CoderHouse Data Engineering
 
-## Pre-entrega 1: Infraestructura base en AWS con Terraform
+## Pre-entrega: Infraestructura base en AWS con Terraform
 
 ### Objetivo
 
