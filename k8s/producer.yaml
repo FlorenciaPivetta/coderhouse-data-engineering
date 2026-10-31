@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sensor-producer
+  namespace: urban-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sensor-producer
+  template:
+    metadata:
+      labels:
+        app: sensor-producer
+    spec:
+      containers:
+        - name: producer
+          image: python:3.11-slim
+          workingDir: /app
+          command: ["/bin/sh", "-c"]
+          args:
+            - pip install --no-cache-dir kafka-python &&
+              python -u /app/producer_sensores.py
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: kafka-config
+                  key: KAFKA_BOOTSTRAP_SERVERS
+            - name: KAFKA_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: kafka-config
+                  key: KAFKA_TOPIC
+            - name: INTERVAL_SECONDS
+              value: "2"
+          volumeMounts:
+            - name: producer-code
+              mountPath: /app
+      volumes:
+        - name: producer-code
+          configMap:
+            name: producer-code
