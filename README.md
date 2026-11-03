@@ -1,65 +1,179 @@
-﻿# CoderHouse Data Engineering - Pre-entrega 1
+# CoderHouse Data Engineering - Pre-entrega 4
+## Procesamiento de eventos en tiempo real con Apache Flink
 
 ## Objetivo
 
-Implementar una infraestructura base en AWS utilizando Terraform, con una red privada, acceso privado a S3 mediante un Gateway Endpoint y roles IAM para servicios de datos y auditoría.
+Desarrollar y desplegar una aplicación de procesamiento de datos en tiempo real utilizando **Amazon Managed Service for Apache Flink**, integrada con un stream de **Amazon Kinesis Data Streams** existente.
 
-## Arquitectura implementada
+La aplicación consume eventos JSON, interpreta sus marcas temporales, asigna Watermarks y realiza agregaciones mediante ventanas de Event Time. La infraestructura necesaria para ejecutar el procesamiento se administra mediante Terraform.
 
-- **VPC:** red virtual del entorno `dev`.
-- **Subredes privadas:** dos subredes distribuidas en zonas de disponibilidad.
-- **Tabla de rutas:** asociada a las subredes privadas.
-- **S3 Gateway Endpoint:** permite el acceso a S3 desde la VPC sin requerir una ruta pública a Internet para ese servicio.
-- **Data Service Role:** rol IAM para un servicio de datos, con permisos de lectura y escritura limitados al prefijo configurado en S3.
-- **Audit Read-only Role:** rol IAM con permisos de consulta para EC2, IAM y S3.
+## Arquitectura
 
-## Backend remoto de Terraform
+El flujo implementado es el siguiente:
 
-El estado se almacena en un bucket S3 con cifrado SSE-S3 (AES-256), versionado y bloqueo de acceso pÃºblico. Terraform utiliza el bloqueo nativo de S3 mediante `use_lockfile = true`.
+1. **Amazon Kinesis Data Streams:** recibe los eventos y funciona como fuente de datos de la aplicación.
+2. **Managed Service for Apache Flink:** consume los registros del stream y ejecuta el procesamiento.
+3. **Deserialización:** los eventos JSON se validan y transforman en estructuras utilizables por Flink.
+4. **Event Time y Watermarks:** se utilizan las marcas temporales de los eventos para gestionar datos que llegan fuera de orden.
+5. **Ventanas temporales:** los eventos se agrupan por tipo y se calculan métricas.
+6. **Amazon CloudWatch:** recibe los logs de la aplicación para facilitar el seguimiento de su ejecución.
 
-- **Región:** `us-east-1`
-- **Bucket:** `coderhouse-data-tfstate-662241429835-us-east-1`
-- **Clave del estado:** `coderhouse-data-engineering/dev/terraform.tfstate`
+## Lógica de procesamiento
+
+### Consumo y deserialización
+
+La aplicación utiliza el conector de Kinesis para consumir eventos desde el stream existente `dev-data-stream`.
+
+Cada evento se recibe en formato JSON y se procesa mediante `event_parser.py`.
+
+Se validan los siguientes campos:
+
+- `event_id`: identificador del evento.
+- `event_type`: tipo de evento.
+- `user_id`: identificador del usuario.
+- `event_time`: fecha y hora del evento.
+- `amount`: importe asociado al evento.
+
+Los registros inválidos o con importes negativos generan errores de validación.
+
+### Event Time y Watermarks
+
+El procesamiento utiliza **Event Time**, tomando como referencia el momento en que ocurrió el evento y no el momento en que fue recibido.
+
+Se implementa una estrategia de Watermarks con una tolerancia de **30 segundos de desorden** (*bounded out-of-orderness*).
+
+Esto permite procesar eventos que llegan con cierto retraso debido a las condiciones naturales de la red.
+
+### Agregaciones mediante ventanas
+
+El flujo principal utiliza ventanas **Tumbling de un minuto**, agrupando los eventos por `event_type`.
+
+Para cada ventana se calculan las siguientes métricas:
+
+- `event_count`: cantidad de eventos.
+- `total_amount`: suma de los importes.
+- `average_amount`: promedio de los importes.
+
+Los resultados se emiten mediante la salida de la aplicación Flink.
+
+También se encuentra implementada una alternativa de ventanas Sliding de cinco minutos, con desplazamiento de un minuto. Esta funcionalidad está disponible en el código, pero no está conectada al flujo principal.
+
+### Procesamiento Stateful
+
+Se implementa `StatefulAggregator`, una función basada en `KeyedProcessFunction` que utiliza `ValueState` para mantener el conteo de eventos y el importe acumulado por clave.
+
+Esta implementación permite conservar información entre eventos de una misma clave durante la ejecución del operador.
+
+La función cuenta con pruebas específicas, aunque actualmente no forma parte del flujo principal definido en `main.py`, que utiliza las agregaciones por ventanas Tumbling.
+
+## Tolerancia a fallos y Checkpointing
+
+La aplicación tiene habilitado el mecanismo de checkpointing de Managed Service for Apache Flink.
+
+Configuración implementada:
+
+- Checkpointing habilitado.
+- Intervalo de checkpoint: 60.000 ms.
+- Pausa mínima entre checkpoints: 30.000 ms.
+- Modo de checkpoint: `EXACTLY_ONCE`.
+- Máximo de checkpoints concurrentes: 1.
+- Timeout: 120.000 ms.
+- Tolerancia a fallos: 3.
+
+La configuración del recurso de Managed Flink se encuentra en Terraform. La persistencia y recuperación de checkpoints se gestionan mediante el servicio administrado; no se declara un bucket o una ruta S3 personalizada para checkpoints en esta implementación.
+
+## Infraestructura con Terraform
+
+Se utiliza Terraform para definir y administrar los recursos necesarios para desplegar la aplicación.
+
+El módulo `modules/flink/` define:
+
+- Rol IAM de ejecución para Managed Flink.
+- Permisos de lectura sobre el stream de Kinesis.
+- Permisos para acceder al artefacto almacenado en S3.
+- Permisos para publicar logs en CloudWatch.
+- Bucket S3 para almacenar el artefacto de la aplicación.
+- Aplicación de Amazon Managed Service for Apache Flink.
+- Configuración de checkpoints y monitoreo.
+- Configuración de paralelismo.
+
+El módulo `modules/kinesis/` define recursos IAM asociados a servicios de ingesta. El stream utilizado por Flink es existente y se referencia mediante su ARN; no se crea un nuevo Kinesis Data Stream en este módulo.
+
+### Paralelismo y KPUs
+
+La aplicación se configuró con:
+
+| Parámetro | Configuración |
+|---|---|
+| Runtime | FLINK-1_19 |
+| Parallelism | 1 |
+| Parallelism per KPU | 1 |
+| Autoscaling | Deshabilitado |
+
+La configuración utiliza un paralelismo de 1 y una unidad de paralelismo por KPU. El escalado automático está deshabilitado.
+
+## Empaquetado de la aplicación
+
+El proyecto utiliza Maven para generar el artefacto requerido por Managed Flink.
+
+El proceso incluye:
+
+- Dependencias de Apache Flink.
+- Conector de Kinesis compatible con Flink.
+- Código fuente Python.
+- Archivos de configuración.
+- Empaquetado de la aplicación en formato ZIP.
+
+Para generar el artefacto:
+
+```bash
+mvn clean package
+```
+
+El artefacto generado es `target/flink-kinesis-preentrega4-1.0.0-managed-flink.zip`. Terraform lo almacena en S3 y lo utiliza para configurar la aplicación administrada.
+
+## Pruebas
+
+Se implementaron pruebas para validar la deserialización de eventos JSON, el rechazo de registros inválidos, la actualización del estado mediante `ValueState` y la ejecución de un pipeline local.
+
+Para ejecutarlas:
+
+`source .venv-linux/bin/activate`
+
+`PYTHONPATH=. pytest flink/tests/ -v`
+
+## Despliegue y validación
+
+La infraestructura se administra desde `environments/dev/`.
+
+Los comandos de validación son `terraform fmt -recursive`, `terraform validate` y `terraform plan`.
+
+La aplicación se desplegó en Amazon Managed Service for Apache Flink con runtime `FLINK-1_19`.
+
+La validación contempla el estado de la aplicación, la lectura de registros desde Kinesis, las métricas de procesamiento, la ejecución de checkpoints y los logs de CloudWatch.
 
 ## Estructura del proyecto
 
-- `modules/network/`: recursos de red.
+- `assembly/`: configuración del empaquetado.
+- `environments/dev/`: configuración de Terraform del entorno.
+- `flink/config/`: configuración de Flink y Kinesis.
+- `flink/src/`: código de procesamiento.
+- `flink/tests/`: pruebas de la aplicación.
+- `modules/flink/`: infraestructura de Managed Flink.
+- `modules/kinesis/`: recursos IAM asociados a Kinesis.
 - `modules/identity/`: roles y políticas IAM.
-- `environments/dev/`: configuración del entorno de desarrollo.
-- `PLAN_OUTPUT.md`: salida del plan de Terraform.
+- `modules/network/`: infraestructura de red.
+- `pom.xml`: configuración de Maven.
 
-## Requisitos
+## Tecnologías utilizadas
 
-- Terraform 1.6 o superior.
-- AWS CLI configurado con credenciales válidas.
-- Permisos de AWS para consultar y administrar los recursos definidos.
-
-## Comandos de ejecuciÃ³n
-
-Ejecutar desde `environments/dev/`:
-
-```powershell
-terraform init
-terraform fmt -recursive
-terraform validate
-terraform plan
-terraform apply
-```
-
-Para consultar los outputs:
-
-```powershell
-terraform output
-```
+Python, Apache Flink, PyFlink, Amazon Managed Service for Apache Flink, Amazon Kinesis Data Streams, Amazon S3, Amazon CloudWatch, AWS IAM, Terraform, Maven y Pytest.
 
 ## Seguridad
 
-No versionar credenciales, archivos de estado de Terraform, archivos `.tfvars` con valores sensibles ni planes binarios. Mantener `.terraform.lock.hcl` versionado.
+No se deben versionar credenciales de AWS, archivos de variables sensibles, estados locales de Terraform ni archivos generados durante la ejecución.
 
-## Validación
+---
 
-La infraestructura fue aplicada correctamente. La última ejecuciÃ³n de `terraform plan` finalizó con el mensaje:
-
-`No changes. Your infrastructure matches the configuration.`
-
-Esto indica que no se detectaron diferencias entre la configuración y la infraestructura existente.
+**Proyecto:** CoderHouse - Data Engineering
+**Checkpoint:** Pre-entrega 4 - Procesamiento en tiempo real

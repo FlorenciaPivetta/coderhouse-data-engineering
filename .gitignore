@@ -33,3 +33,17 @@ Thumbs.db
 
 tfplan
 *.plan
+
+# Entornos virtuales de Python
+.venv/
+.venv-linux/
+__pycache__/
+*.py[cod]
+
+# Archivos generados por Maven
+target/
+dependency-reduced-pom.xml
+
+# PyFlink: archivos locales de ejecucion
+flink/checkpoints/
+flink/output/

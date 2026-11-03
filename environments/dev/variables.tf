@@ -2,7 +2,7 @@
 variable "aws_region" {
   description = "Region de AWS donde se desplegara la infraestructura"
   type        = string
-  default     = "us-east-1"
+  default     = "us-east-2"
 }
 
 variable "environment" {
@@ -37,5 +37,10 @@ variable "data_prefix" {
 
 variable "audit_principal_arn" {
   description = "ARN del principal autorizado a asumir el rol de auditoría"
+  type        = string
+}
+
+variable "kinesis_stream_arn" {
+  description = "ARN del stream Kinesis utilizado como entrada de Flink"
   type        = string
 }
