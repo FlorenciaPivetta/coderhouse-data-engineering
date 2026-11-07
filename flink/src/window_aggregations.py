@@ -1,10 +1,12 @@
-from pyflink.common import Time
-from pyflink.datastream import Window
+from pyflink.common import Row, Time, Types
+from pyflink.datastream.functions import (
+    AggregateFunction,
+    WindowFunction,
+)
 from pyflink.datastream.window import (
     TumblingEventTimeWindows,
     SlidingEventTimeWindows,
 )
-from pyflink.datastream.functions import AggregateFunction
 
 
 class EventWindowAggregator(AggregateFunction):
@@ -41,12 +43,50 @@ class EventWindowAggregator(AggregateFunction):
         }
 
 
+class EventWindowResult(WindowFunction):
+
+    def apply(self, key, window, inputs):
+        for result in inputs:
+            yield Row(
+                event_type=key,
+                window_start=window.start,
+                window_end=window.end,
+                event_count=result["event_count"],
+                total_amount=result["total_amount"],
+                average_amount=result["average_amount"],
+            )
+
+
+WINDOW_OUTPUT_TYPE = Types.ROW_NAMED(
+    [
+        "event_type",
+        "window_start",
+        "window_end",
+        "event_count",
+        "total_amount",
+        "average_amount",
+    ],
+    [
+        Types.STRING(),
+        Types.LONG(),
+        Types.LONG(),
+        Types.LONG(),
+        Types.DOUBLE(),
+        Types.DOUBLE(),
+    ],
+)
+
+
 def tumbling_window(stream):
     return (
         stream
         .key_by(lambda event: event["event_type"])
         .window(TumblingEventTimeWindows.of(Time.minutes(1)))
-        .aggregate(EventWindowAggregator())
+        .aggregate(
+            EventWindowAggregator(),
+            EventWindowResult(),
+            output_type=WINDOW_OUTPUT_TYPE,
+        )
     )
 
 
@@ -54,9 +94,15 @@ def sliding_window(stream):
     return (
         stream
         .key_by(lambda event: event["event_type"])
-        .window(SlidingEventTimeWindows.of(
-            Time.minutes(5),
-            Time.minutes(1)
-        ))
-        .aggregate(EventWindowAggregator())
+        .window(
+            SlidingEventTimeWindows.of(
+                Time.minutes(5),
+                Time.minutes(1),
+            )
+        )
+        .aggregate(
+            EventWindowAggregator(),
+            EventWindowResult(),
+            output_type=WINDOW_OUTPUT_TYPE,
+        )
     )

@@ -1,179 +1,226 @@
-# CoderHouse Data Engineering - Pre-entrega 4
-## Procesamiento de eventos en tiempo real con Apache Flink
+# CoderHouse Data Engineering – Pre-entrega 5
 
 ## Objetivo
 
-Desarrollar y desplegar una aplicación de procesamiento de datos en tiempo real utilizando **Amazon Managed Service for Apache Flink**, integrada con un stream de **Amazon Kinesis Data Streams** existente.
-
-La aplicación consume eventos JSON, interpreta sus marcas temporales, asigna Watermarks y realiza agregaciones mediante ventanas de Event Time. La infraestructura necesaria para ejecutar el procesamiento se administra mediante Terraform.
+Implementar una infraestructura base en AWS utilizando Terraform, con una red privada, acceso a S3 mediante un Gateway Endpoint y roles IAM para servicios de datos y auditoría. El proyecto incorpora un módulo de ingesta de datos basado en Amazon Kinesis Data Streams y Amazon Data Firehose para entregar datos en S3.
 
 ## Arquitectura
 
-El flujo implementado es el siguiente:
+### Infraestructura base
 
-1. **Amazon Kinesis Data Streams:** recibe los eventos y funciona como fuente de datos de la aplicación.
-2. **Managed Service for Apache Flink:** consume los registros del stream y ejecuta el procesamiento.
-3. **Deserialización:** los eventos JSON se validan y transforman en estructuras utilizables por Flink.
-4. **Event Time y Watermarks:** se utilizan las marcas temporales de los eventos para gestionar datos que llegan fuera de orden.
-5. **Ventanas temporales:** los eventos se agrupan por tipo y se calculan métricas.
-6. **Amazon CloudWatch:** recibe los logs de la aplicación para facilitar el seguimiento de su ejecución.
+- **VPC:** red virtual del entorno `dev`.
+- **Subredes privadas:** dos subredes distribuidas en zonas de disponibilidad.
+- **Tabla de rutas:** asociada a las subredes privadas.
+- **S3 Gateway Endpoint:** permite acceder a S3 desde la VPC sin requerir una ruta pública a Internet para ese servicio.
+- **Data Service Role:** rol IAM para un servicio de datos, con permisos limitados al prefijo configurado en S3.
+- **Audit Read-only Role:** rol IAM con permisos de consulta para EC2, IAM y S3, restringidos según las acciones y los recursos compatibles.
 
-## Lógica de procesamiento
+### Ingesta de datos
 
-### Consumo y deserialización
+- **Amazon Kinesis Data Streams:** flujo de datos configurado con dos shards y una retención de 24 horas.
+- **Amazon Data Firehose:** entrega los registros de Kinesis a S3.
+- **Amazon S3:** almacenamiento de los datos entregados, organizados por año, mes y día.
+- **Amazon CloudWatch:** grupo y stream de logs, junto con alarmas para detectar excesos de throughput de lectura y escritura en Kinesis.
+- **IAM:** rol de entrega de Firehose con permisos específicos para acceder al stream, escribir en S3 y publicar logs.
 
-La aplicación utiliza el conector de Kinesis para consumir eventos desde el stream existente `dev-data-stream`.
+La creación efectiva de los recursos de ingesta depende de que la cuenta de AWS tenga habilitado el acceso a los servicios correspondientes y de que las credenciales dispongan de los permisos necesarios.
 
-Cada evento se recibe en formato JSON y se procesa mediante `event_parser.py`.
+### Procesamiento de datos y Lakehouse
 
-Se validan los siguientes campos:
+El proyecto incorpora un flujo de procesamiento basado en Apache Flink, ejecutado mediante Amazon Managed Service for Apache Flink.
 
-- `event_id`: identificador del evento.
-- `event_type`: tipo de evento.
-- `user_id`: identificador del usuario.
-- `event_time`: fecha y hora del evento.
-- `amount`: importe asociado al evento.
+Los componentes contemplados son:
 
-Los registros inválidos o con importes negativos generan errores de validación.
+- **Amazon Kinesis Data Streams:** fuente de eventos para el procesamiento.
+- **Apache Flink:** procesamiento de eventos y agregaciones mediante ventanas temporales.
+- **Python / PyFlink:** implementación de la lógica de procesamiento.
+- **AWS Glue Data Catalog:** catálogo para administrar los metadatos de las tablas.
+- **Apache Iceberg:** formato de tablas utilizado para el almacenamiento analítico.
+- **Amazon S3:** almacenamiento de los datos y metadatos del Lakehouse.
 
-### Event Time y Watermarks
+La configuración contempla la creación del catálogo `glue_catalog`, la base de datos `lakehouse_db` y la tabla `event_window_aggregations`.
 
-El procesamiento utiliza **Event Time**, tomando como referencia el momento en que ocurrió el evento y no el momento en que fue recibido.
+### Estado de la implementación de Flink e Iceberg
 
-Se implementa una estrategia de Watermarks con una tolerancia de **30 segundos de desorden** (*bounded out-of-orderness*).
+Se desarrolló la configuración del proceso de procesamiento de eventos, las agregaciones por ventanas y la integración prevista con Glue Catalog e Iceberg.
 
-Esto permite procesar eventos que llegan con cierto retraso debido a las condiciones naturales de la red.
+Durante las pruebas en Amazon Managed Service for Apache Flink se identificaron inconvenientes relacionados con la carga de dependencias del entorno de ejecución, entre ellos:
 
-### Agregaciones mediante ventanas
+- `ClassNotFoundException: ExternalPythonKeyedProcessOperator`
+- `NoClassDefFoundError: org/apache/hadoop/conf/Configuration`
 
-El flujo principal utiliza ventanas **Tumbling de un minuto**, agrupando los eventos por `event_type`.
+Por este motivo, no se pudo completar la validación de extremo a extremo. La creación efectiva de la tabla Iceberg, la escritura de datos y la consulta de los resultados quedan pendientes de verificación.
 
-Para cada ventana se calculan las siguientes métricas:
 
-- `event_count`: cantidad de eventos.
-- `total_amount`: suma de los importes.
-- `average_amount`: promedio de los importes.
 
-Los resultados se emiten mediante la salida de la aplicación Flink.
+## Backend remoto de Terraform
 
-También se encuentra implementada una alternativa de ventanas Sliding de cinco minutos, con desplazamiento de un minuto. Esta funcionalidad está disponible en el código, pero no está conectada al flujo principal.
+El estado de Terraform se almacena en un bucket S3 con cifrado SSE-S3 (AES-256), versionado y bloqueo de acceso público. El backend utiliza el mecanismo nativo de bloqueo de S3 mediante `use_lockfile = true`.
 
-### Procesamiento Stateful
-
-Se implementa `StatefulAggregator`, una función basada en `KeyedProcessFunction` que utiliza `ValueState` para mantener el conteo de eventos y el importe acumulado por clave.
-
-Esta implementación permite conservar información entre eventos de una misma clave durante la ejecución del operador.
-
-La función cuenta con pruebas específicas, aunque actualmente no forma parte del flujo principal definido en `main.py`, que utiliza las agregaciones por ventanas Tumbling.
-
-## Tolerancia a fallos y Checkpointing
-
-La aplicación tiene habilitado el mecanismo de checkpointing de Managed Service for Apache Flink.
-
-Configuración implementada:
-
-- Checkpointing habilitado.
-- Intervalo de checkpoint: 60.000 ms.
-- Pausa mínima entre checkpoints: 30.000 ms.
-- Modo de checkpoint: `EXACTLY_ONCE`.
-- Máximo de checkpoints concurrentes: 1.
-- Timeout: 120.000 ms.
-- Tolerancia a fallos: 3.
-
-La configuración del recurso de Managed Flink se encuentra en Terraform. La persistencia y recuperación de checkpoints se gestionan mediante el servicio administrado; no se declara un bucket o una ruta S3 personalizada para checkpoints en esta implementación.
-
-## Infraestructura con Terraform
-
-Se utiliza Terraform para definir y administrar los recursos necesarios para desplegar la aplicación.
-
-El módulo `modules/flink/` define:
-
-- Rol IAM de ejecución para Managed Flink.
-- Permisos de lectura sobre el stream de Kinesis.
-- Permisos para acceder al artefacto almacenado en S3.
-- Permisos para publicar logs en CloudWatch.
-- Bucket S3 para almacenar el artefacto de la aplicación.
-- Aplicación de Amazon Managed Service for Apache Flink.
-- Configuración de checkpoints y monitoreo.
-- Configuración de paralelismo.
-
-El módulo `modules/kinesis/` define recursos IAM asociados a servicios de ingesta. El stream utilizado por Flink es existente y se referencia mediante su ARN; no se crea un nuevo Kinesis Data Stream en este módulo.
-
-### Paralelismo y KPUs
-
-La aplicación se configuró con:
-
-| Parámetro | Configuración |
-|---|---|
-| Runtime | FLINK-1_19 |
-| Parallelism | 1 |
-| Parallelism per KPU | 1 |
-| Autoscaling | Deshabilitado |
-
-La configuración utiliza un paralelismo de 1 y una unidad de paralelismo por KPU. El escalado automático está deshabilitado.
-
-## Empaquetado de la aplicación
-
-El proyecto utiliza Maven para generar el artefacto requerido por Managed Flink.
-
-El proceso incluye:
-
-- Dependencias de Apache Flink.
-- Conector de Kinesis compatible con Flink.
-- Código fuente Python.
-- Archivos de configuración.
-- Empaquetado de la aplicación en formato ZIP.
-
-Para generar el artefacto:
-
-```bash
-mvn clean package
-```
-
-El artefacto generado es `target/flink-kinesis-preentrega4-1.0.0-managed-flink.zip`. Terraform lo almacena en S3 y lo utiliza para configurar la aplicación administrada.
-
-## Pruebas
-
-Se implementaron pruebas para validar la deserialización de eventos JSON, el rechazo de registros inválidos, la actualización del estado mediante `ValueState` y la ejecución de un pipeline local.
-
-Para ejecutarlas:
-
-`source .venv-linux/bin/activate`
-
-`PYTHONPATH=. pytest flink/tests/ -v`
-
-## Despliegue y validación
-
-La infraestructura se administra desde `environments/dev/`.
-
-Los comandos de validación son `terraform fmt -recursive`, `terraform validate` y `terraform plan`.
-
-La aplicación se desplegó en Amazon Managed Service for Apache Flink con runtime `FLINK-1_19`.
-
-La validación contempla el estado de la aplicación, la lectura de registros desde Kinesis, las métricas de procesamiento, la ejecución de checkpoints y los logs de CloudWatch.
+- **Región:** `us-east-1`
+- **Bucket:** `coderhouse-data-tfstate-662241429835-us-east-1`
+- **Clave del estado:** `coderhouse-data-engineering/dev/terraform.tfstate`
+- **Bloqueo:** archivo de bloqueo nativo de S3.
 
 ## Estructura del proyecto
 
-- `assembly/`: configuración del empaquetado.
-- `environments/dev/`: configuración de Terraform del entorno.
-- `flink/config/`: configuración de Flink y Kinesis.
-- `flink/src/`: código de procesamiento.
-- `flink/tests/`: pruebas de la aplicación.
-- `modules/flink/`: infraestructura de Managed Flink.
-- `modules/kinesis/`: recursos IAM asociados a Kinesis.
+- `modules/network/`: recursos de red y conectividad privada.
 - `modules/identity/`: roles y políticas IAM.
-- `modules/network/`: infraestructura de red.
-- `pom.xml`: configuración de Maven.
+- `modules/kinesis/`: stream de Kinesis, configuración de Firehose, permisos y monitoreo.
+- `environments/dev/`: configuración del entorno de desarrollo.
+- `producers/`: productor Python para generar y enviar eventos a Kinesis.
+- `PLAN_OUTPUT.md`: archivo de referencia para documentar la salida de un plan de Terraform. Su contenido debe corresponder a la ejecución que se presenta como evidencia.
 
-## Tecnologías utilizadas
+## Requisitos
 
-Python, Apache Flink, PyFlink, Amazon Managed Service for Apache Flink, Amazon Kinesis Data Streams, Amazon S3, Amazon CloudWatch, AWS IAM, Terraform, Maven y Pytest.
+- Terraform 1.10.0 o superior.
+- AWS CLI configurado con credenciales válidas.
+- Python instalado y disponible mediante el comando `py` en Windows, o mediante el ejecutable correspondiente.
+- Dependencias de Python instaladas desde `producers/requirements.txt`.
+- Cuenta de AWS con acceso a los servicios utilizados.
+- Permisos de AWS para consultar y administrar los recursos definidos.
+
+## Comandos de ejecución
+
+Ejecutar desde la raíz del repositorio.
+
+### Inicializar Terraform
+
+```powershell
+terraform -chdir=environments/dev init
+```
+
+### Formatear los archivos
+
+```powershell
+terraform fmt -recursive
+```
+
+### Validar la configuración
+
+```powershell
+terraform -chdir=environments/dev validate
+```
+
+### Revisar los cambios propuestos
+
+```powershell
+terraform -chdir=environments/dev plan
+```
+
+Revisar el plan antes de aplicar cualquier cambio. La salida del plan describe los cambios propuestos y no demuestra que los recursos se hayan creado.
+
+### Aplicar los cambios
+
+Ejecutar únicamente después de revisar el plan y confirmar que AWS permite crear los recursos:
+
+```powershell
+terraform -chdir=environments/dev apply
+```
+
+### Consultar los outputs
+
+```powershell
+terraform -chdir=environments/dev output
+```
 
 ## Seguridad
 
-No se deben versionar credenciales de AWS, archivos de variables sensibles, estados locales de Terraform ni archivos generados durante la ejecución.
+- No versionar credenciales ni claves de acceso de AWS.
+- No versionar archivos de estado de Terraform (`terraform.tfstate` y sus backups).
+- No versionar archivos `.tfvars` que contengan información sensible.
+- No versionar planes binarios como `tfplan`.
+- Mantener `.terraform.lock.hcl` versionado para registrar las versiones de los proveedores.
+- Mantener el acceso público a los buckets bloqueado.
+- Aplicar el principio de mínimo privilegio en las políticas IAM.
 
----
+## Validación
 
-**Proyecto:** CoderHouse - Data Engineering
-**Checkpoint:** Pre-entrega 4 - Procesamiento en tiempo real
+### Validaciones locales
+
+- La configuración de Terraform fue validada mediante `terraform validate`.
+- El productor Python pasó la comprobación de sintaxis mediante `py_compile`.
+- El modo `--dry-run` generó 100 eventos JSON de prueba y utilizó 100 claves de partición distintas.
+- La prueba local se realizó sin enviar registros a AWS.
+
+### Estado del despliegue
+
+El acceso a Kinesis está pendiente de resolución en la cuenta de AWS. Por este motivo, la creación y validación real de los recursos de Kinesis, Firehose y CloudWatch, así como la entrega efectiva de registros en S3, quedan pendientes.
+
+La salida de `terraform plan` debe corresponder a la última ejecución utilizada como evidencia. Un plan describe cambios propuestos, pero no demuestra que los recursos se hayan desplegado.
+
+No considerar las pruebas locales como evidencia de entrega efectiva en AWS.
+
+## Productor Python
+
+El productor se encuentra en `producers/producer.py` y permite generar eventos JSON de prueba y enviarlos a un stream de Kinesis.
+
+### Instalar dependencias
+
+Desde la raíz del repositorio:
+
+```powershell
+py -m pip install -r .\producers\requirements.txt
+```
+
+### Ejecutar una prueba local
+
+```powershell
+py .\producers\producer.py --dry-run --count 100
+```
+
+Esta ejecución genera 100 eventos localmente sin conectarse a AWS.
+
+### Enviar eventos a Kinesis
+
+Cuando el stream esté disponible y las credenciales tengan los permisos necesarios:
+
+```powershell
+py .\producers\producer.py --stream dev-data-stream --region us-east-1 --profile default --count 100 --interval 0.5
+```
+
+El perfil `default` corresponde al perfil configurado en AWS CLI para este entorno.
+
+## Prueba de ingesta real en AWS
+
+La prueba de extremo a extremo está pendiente de que se resuelva el acceso a Kinesis en la cuenta de AWS. Los siguientes comandos documentan el procedimiento que se ejecutará cuando el servicio esté disponible; no constituyen evidencia de una entrega real.
+
+### Enviar un evento de prueba mediante AWS CLI
+
+Crear un archivo `event.json` en la raíz del repositorio con el siguiente contenido:
+
+```json
+{
+  "event_id": "test-001",
+  "event_type": "view",
+  "user_id": "user-test-001",
+  "event_time": "2026-10-23T00:00:00Z",
+  "amount": 10.5
+}
+```
+
+Enviar el evento al stream:
+
+```powershell
+aws kinesis put-record --stream-name dev-data-stream --partition-key "user-test-001" --data fileb://event.json --region us-east-1 --profile default
+```
+
+### Verificar la entrega en S3
+
+Cuando Firehose haya procesado el registro y entregado el archivo, listar los objetos del prefijo configurado:
+
+```powershell
+aws s3 ls s3://coderhouse-data-flor-dev/lakehouse/ --recursive --region us-east-1 --profile default
+```
+
+El ejemplo utiliza el bucket `coderhouse-data-flor-dev` y el prefijo `lakehouse`, configurados para el entorno de desarrollo.
+
+### Evidencia pendiente
+
+Para completar la validación de extremo a extremo, se deberá conservar evidencia de:
+
+1. La respuesta de AWS al envío del registro a Kinesis.
+2. La existencia de los recursos de ingesta desplegados.
+3. La salida real del comando `aws s3 ls` donde se vea el objeto entregado por Firehose, o una captura equivalente de la consola de S3.
+
+Hasta que estas pruebas se realicen satisfactoriamente, la ingesta debe considerarse pendiente de validación en AWS.

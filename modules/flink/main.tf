@@ -3,6 +3,8 @@
 # IAM: Rol de ejecución para Amazon Managed Flink
 # ---------------------------------------------------------
 
+data "aws_caller_identity" "current" {}
+
 data "aws_iam_policy_document" "flink_assume_role" {
   statement {
     effect  = "Allow"
@@ -26,7 +28,7 @@ resource "aws_iam_role" "flink_execution" {
 }
 
 # ---------------------------------------------------------
-# S3: Bucket, versionado y subida del artefacto ZIP
+# S3: Bucket de artefactos, versionado y ZIP de Flink
 # ---------------------------------------------------------
 
 resource "aws_s3_bucket" "flink_artifacts" {
@@ -38,7 +40,6 @@ resource "aws_s3_bucket" "flink_artifacts" {
   }
 }
 
-# Habilitar versionado para conservar cada versión del ZIP
 resource "aws_s3_bucket_versioning" "flink_artifacts" {
   bucket = aws_s3_bucket.flink_artifacts.id
 
@@ -47,12 +48,11 @@ resource "aws_s3_bucket_versioning" "flink_artifacts" {
   }
 }
 
-# Subir el artefacto después de habilitar el versionado
 resource "aws_s3_object" "flink_artifact" {
-  bucket = aws_s3_bucket.flink_artifacts.id
-  key    = var.artifact_key
-  source = var.artifact_path
-  etag   = filemd5(var.artifact_path)
+  bucket      = aws_s3_bucket.flink_artifacts.id
+  key         = var.artifact_key
+  source      = var.artifact_path
+  source_hash = filemd5(var.artifact_path)
 
   depends_on = [
     aws_s3_bucket_versioning.flink_artifacts
@@ -62,6 +62,29 @@ resource "aws_s3_object" "flink_artifact" {
     Environment = var.environment
     Project     = "CoderHouse-DataEngineering"
   }
+}
+
+# ---------------------------------------------------------
+# S3: Versionado del bucket Lakehouse existente
+# ---------------------------------------------------------
+
+resource "aws_s3_bucket_versioning" "lakehouse" {
+  provider = aws.lakehouse
+  bucket   = var.data_bucket_name
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# ---------------------------------------------------------
+# AWS Glue: Base de datos del Lakehouse
+# ---------------------------------------------------------
+
+resource "aws_glue_catalog_database" "lakehouse" {
+  name         = "lakehouse_db"
+  description  = "Catalogo de datos Iceberg para el proyecto CoderHouse"
+  location_uri = "s3://${var.data_bucket_name}/${var.data_prefix}/"
 }
 
 # ---------------------------------------------------------
@@ -84,10 +107,11 @@ resource "aws_cloudwatch_log_stream" "flink" {
 }
 
 # ---------------------------------------------------------
-# IAM: Permisos de Kinesis, S3 y CloudWatch
+# IAM: Permisos de ejecución para Flink
 # ---------------------------------------------------------
 
 data "aws_iam_policy_document" "flink_permissions" {
+
   statement {
     sid    = "ReadKinesisStream"
     effect = "Allow"
@@ -103,7 +127,6 @@ data "aws_iam_policy_document" "flink_permissions" {
     resources = [var.kinesis_stream_arn]
   }
 
-  # Permisos para leer el artefacto ZIP y su versión específica
   statement {
     sid    = "ReadApplicationArtifact"
     effect = "Allow"
@@ -131,6 +154,86 @@ data "aws_iam_policy_document" "flink_permissions" {
       "${aws_cloudwatch_log_group.flink.arn}:*"
     ]
   }
+
+  # Acceso al catalogo AWS Glue para Iceberg
+  statement {
+    sid    = "AccessGlueCatalog"
+    effect = "Allow"
+
+    actions = [
+      "glue:GetDatabase",
+      "glue:GetDatabases",
+      "glue:GetTable",
+      "glue:GetTables",
+      "glue:GetPartitions",
+      "glue:CreateTable",
+      "glue:UpdateTable",
+      "glue:DeleteTable"
+    ]
+
+    resources = [
+      "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:catalog",
+      "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/lakehouse_db",
+      "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/lakehouse_db/*"
+    ]
+  }
+
+  # Consulta de ubicacion del bucket Lakehouse
+  statement {
+    sid    = "GetLakehouseBucketLocation"
+    effect = "Allow"
+
+    actions = [
+      "s3:GetBucketLocation"
+    ]
+
+    resources = [
+      "arn:aws:s3:::${var.data_bucket_name}"
+    ]
+  }
+
+  # Listado limitado al prefijo del Lakehouse
+  statement {
+    sid    = "ListLakehouseBucket"
+    effect = "Allow"
+
+    actions = [
+      "s3:ListBucket",
+      "s3:ListBucketMultipartUploads"
+    ]
+
+    resources = [
+      "arn:aws:s3:::${var.data_bucket_name}"
+    ]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+
+      values = [
+        var.data_prefix,
+        "${var.data_prefix}/*"
+      ]
+    }
+  }
+
+  # Lectura, escritura y administracion de archivos Iceberg
+  statement {
+    sid    = "WriteLakehouseObjects"
+    effect = "Allow"
+
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:DeleteObject",
+      "s3:AbortMultipartUpload",
+      "s3:ListMultipartUploadParts"
+    ]
+
+    resources = [
+      "arn:aws:s3:::${var.data_bucket_name}/${var.data_prefix}/*"
+    ]
+  }
 }
 
 resource "aws_iam_role_policy" "flink_permissions" {
@@ -152,6 +255,7 @@ resource "aws_kinesisanalyticsv2_application" "flink" {
   description = "Pre-entrega 4: procesamiento stateful de eventos de Kinesis"
 
   application_configuration {
+
     application_code_configuration {
       code_content_type = "ZIPFILE"
 
@@ -165,17 +269,19 @@ resource "aws_kinesisanalyticsv2_application" "flink" {
     }
 
     environment_properties {
+
+      # Configuracion de ejecucion PyFlink
       property_group {
         property_group_id = "kinesis.analytics.flink.run.options"
-
 
         property_map = {
           python  = "main.py"
           jarfile = "flink/lib/pyflink-dependencies.jar"
-          pyFiles = "flink/lib/flink-package.zip"
-        }
+          pyArchives = "flink/lib/flink-package.zip"
+       }
       }
 
+      # Configuracion del origen Kinesis
       property_group {
         property_group_id = "InputStream0"
 
@@ -185,9 +291,24 @@ resource "aws_kinesisanalyticsv2_application" "flink" {
           "flink.source.init.position" = "TRIM_HORIZON"
         }
       }
+
+      # Configuracion del catalogo Iceberg
+      property_group {
+        property_group_id = "Iceberg"
+
+        property_map = {
+          "catalog.name"     = "glue_catalog"
+          "catalog.database" = "lakehouse_db"
+          "catalog.region"   = var.aws_region
+          "warehouse"        = "s3://${var.data_bucket_name}/${var.data_prefix}/"
+          "s3.region"        = "us-east-1"
+          "table.name"       = "event_window_aggregations"
+        }
+      }
     }
 
     flink_application_configuration {
+
       checkpoint_configuration {
         configuration_type            = "CUSTOM"
         checkpointing_enabled         = true
@@ -220,6 +341,8 @@ resource "aws_kinesisanalyticsv2_application" "flink" {
   }
 
   depends_on = [
-    aws_iam_role_policy.flink_permissions
+    aws_iam_role_policy.flink_permissions,
+    aws_glue_catalog_database.lakehouse,
+    aws_s3_bucket_versioning.lakehouse
   ]
 }

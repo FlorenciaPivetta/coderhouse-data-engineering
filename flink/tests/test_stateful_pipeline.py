@@ -1,5 +1,5 @@
-
 import json
+import sys
 
 from pyflink.common import Types
 from pyflink.datastream import StreamExecutionEnvironment
@@ -9,6 +9,10 @@ from flink.src.stateful_processor import StatefulAggregator
 
 def test_stateful_pipeline():
     env = StreamExecutionEnvironment.get_execution_environment()
+
+    # Utilizar el mismo intérprete de Python del entorno virtual
+    env.set_python_executable(sys.executable)
+
     env.set_parallelism(1)
 
     raw_events = [

@@ -11,6 +11,7 @@ module "network" {
   vpc_cidr             = var.vpc_cidr
   private_subnet_cidrs = var.private_subnet_cidrs
 }
+
 module "identity" {
   source = "../../modules/identity"
 
@@ -34,9 +35,15 @@ module "kinesis" {
 module "flink" {
   source = "../../modules/flink"
 
+  providers = {
+    aws           = aws
+    aws.lakehouse = aws.lakehouse
+  }
+
   environment          = var.environment
   aws_region           = var.aws_region
   data_bucket_name     = var.data_bucket_name
+  data_prefix          = var.data_prefix
   artifact_bucket_name = "coderhouse-flink-artifacts-662241429835-dev"
 
   application_name = "preentrega4-flink"

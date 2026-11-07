@@ -47,3 +47,19 @@ dependency-reduced-pom.xml
 # PyFlink: archivos locales de ejecucion
 flink/checkpoints/
 flink/output/
+
+# Planes de Terraform
+*.tfplan
+*.tfplan.*
+
+# Backups locales
+*_backup.md
+*.bak
+
+# Planes de Terraform
+*.tfplan
+*.tfplan.*
+
+# Backups locales
+*_backup.md
+*.bak

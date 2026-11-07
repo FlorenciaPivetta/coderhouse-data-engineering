@@ -1,3 +1,16 @@
+
+terraform {
+  required_providers {
+    aws = {
+      source = "hashicorp/aws"
+
+      configuration_aliases = [
+        aws.lakehouse
+      ]
+    }
+  }
+}
+
 variable "environment" {
   description = "Entorno de despliegue"
   type        = string
@@ -9,7 +22,12 @@ variable "aws_region" {
 }
 
 variable "data_bucket_name" {
-  description = "Bucket S3 para el artefacto de Flink"
+  description = "Nombre del bucket S3 destinado al Lakehouse"
+  type        = string
+}
+
+variable "data_prefix" {
+  description = "Prefijo dentro del bucket S3 destinado al Lakehouse"
   type        = string
 }
 
