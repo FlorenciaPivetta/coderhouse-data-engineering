@@ -295,14 +295,14 @@ Comando ejecutado desde la raíz del repositorio en WSL2:
 | Archivo | Pruebas aprobadas |
 |---|---:|
 | test_event_parser.py | 3 |
-| test_safe_event_parser.py | 4 |
+| test_safe_event_parser.py | 9 |
 | test_stateful_pipeline.py | 2 |
 | test_stateful_processor.py | 1 |
 | test_window_aggregations.py | 11 |
-| Total | 21 |
+| Total | 26 |
 
-Resultado observado: 21 pruebas aprobadas, 0 fallidas y 9 advertencias.
-La ejecución tuvo una duración registrada de 60,15 segundos.
+Última ejecución: 26 pruebas aprobadas, 0 fallidas y 9 advertencias.
+Duración: 81,69 segundos. Se excluyó `test_iceberg_upsert.py`, cuya validación se documenta por separado.
 
 Las pruebas cubrieron validación de eventos, agregaciones, combinación de
 estado, asignación temporal, Watermarks, configuración de ventanas y
