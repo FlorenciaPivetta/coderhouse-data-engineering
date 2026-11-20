@@ -1,0 +1,5 @@
+{
+    "Database":  "analytics",
+    "Sql":  "CREATE EXTERNAL SCHEMA lakehouse\nFROM DATA CATALOG\nDATABASE \u0027lakehouse_db\u0027\nREGION \u0027us-east-2\u0027\nIAM_ROLE \u0027arn:aws:iam::662241429835:role/redshift-serverless-dev-role\u0027;",
+    "WorkgroupName":  "redshift-dev-wg"
+}

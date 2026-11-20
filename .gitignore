@@ -1,10 +1,11 @@
-# Terraform: estado y archivos locales
+﻿# Terraform: estado y archivos locales
 .terraform/
 *.tfstate
 *.tfstate.*
 crash.log
 crash.*.log
 tfplan
+tfplan-*
 *.plan
 *.tfplan
 *.tfplan.*
@@ -22,7 +23,7 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 
-# Configuracion local de Terraform
+# Configuración local de Terraform
 .terraformrc
 terraform.rc
 
@@ -43,6 +44,7 @@ venv/
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
 
 # Maven y PyFlink
 target/
@@ -53,15 +55,18 @@ flink/output/
 
 # Backups locales
 *_backup.md
+*_backup.*
+*_before_*.py
 *.backup
-*.bak
 *.backup-*
+*.bak
+*.bak.*
 *.bak-*
 
 # Artefactos ZIP generados localmente
 environments/dev/flink-deployed-v*.zip
 flink-artifact-s3-version.zip
 
-# Configuraciones locales de ejecuci�n
+# Configuraciones locales de ejecución Flink
 environments/dev/run-configuration.json
 run-configuration.json

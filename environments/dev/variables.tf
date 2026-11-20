@@ -1,5 +1,5 @@
 variable "aws_region" {
-  description = "RegiÛn principal de AWS para Flink, Kinesis y Glue"
+  description = "Regi√≥n principal de AWS para Flink, Kinesis y Glue"
   type        = string
   default     = "us-east-2"
 }
@@ -19,7 +19,10 @@ variable "vpc_cidr" {
 variable "private_subnet_cidrs" {
   description = "Bloques CIDR para las dos subredes privadas"
   type        = list(string)
-  default     = ["10.0.1.0/24", "10.0.2.0/24"]
+  default = [
+    "10.0.1.0/24",
+    "10.0.2.0/24"
+  ]
 }
 
 variable "data_bucket_name" {
@@ -29,13 +32,13 @@ variable "data_bucket_name" {
 }
 
 variable "data_prefix" {
-  description = "Prefijo de S3 al que acceder· el servicio"
+  description = "Prefijo de S3 al que acceder√° el servicio"
   type        = string
   default     = "lakehouse"
 }
 
 variable "audit_principal_arn" {
-  description = "ARN del principal autorizado a asumir el rol de auditorÌa"
+  description = "ARN del principal autorizado a asumir el rol de auditor√≠a"
   type        = string
 }
 

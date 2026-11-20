@@ -1,4 +1,8 @@
 
+# =========================================================
+# DATA SERVICE - TRUST POLICY
+# =========================================================
+
 data "aws_iam_policy_document" "data_service_assume_role" {
   statement {
     effect  = "Allow"
@@ -11,6 +15,10 @@ data "aws_iam_policy_document" "data_service_assume_role" {
   }
 }
 
+# =========================================================
+# DATA SERVICE - IAM ROLE
+# =========================================================
+
 resource "aws_iam_role" "data_service" {
   name               = "${var.environment}-data-service-role"
   assume_role_policy = data.aws_iam_policy_document.data_service_assume_role.json
@@ -20,6 +28,10 @@ resource "aws_iam_role" "data_service" {
     Project     = "CoderHouse-DataEngineering"
   }
 }
+
+# =========================================================
+# DATA SERVICE - S3 PERMISSIONS
+# =========================================================
 
 data "aws_iam_policy_document" "s3_data_access" {
   statement {
@@ -36,10 +48,17 @@ data "aws_iam_policy_document" "s3_data_access" {
   }
 
   statement {
-    sid       = "ReadWriteObjectsInPrefix"
-    effect    = "Allow"
-    actions   = ["s3:GetObject", "s3:PutObject"]
-    resources = ["arn:aws:s3:::${var.data_bucket_name}/${var.data_prefix}/*"]
+    sid    = "ReadWriteObjectsInPrefix"
+    effect = "Allow"
+
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject"
+    ]
+
+    resources = [
+      "arn:aws:s3:::${var.data_bucket_name}/${var.data_prefix}/*"
+    ]
   }
 }
 
@@ -48,6 +67,10 @@ resource "aws_iam_role_policy" "data_service_s3" {
   role   = aws_iam_role.data_service.id
   policy = data.aws_iam_policy_document.s3_data_access.json
 }
+
+# =========================================================
+# AUDIT - TRUST POLICY
+# =========================================================
 
 data "aws_iam_policy_document" "audit_assume_role" {
   statement {
@@ -61,6 +84,10 @@ data "aws_iam_policy_document" "audit_assume_role" {
   }
 }
 
+# =========================================================
+# AUDIT - IAM ROLE
+# =========================================================
+
 resource "aws_iam_role" "audit_readonly" {
   name               = "${var.environment}-audit-readonly-role"
   assume_role_policy = data.aws_iam_policy_document.audit_assume_role.json
@@ -71,7 +98,13 @@ resource "aws_iam_role" "audit_readonly" {
   }
 }
 
+# =========================================================
+# AUDIT - READ ONLY PERMISSIONS
+# =========================================================
+
 data "aws_iam_policy_document" "audit_readonly_permissions" {
+
+  # EC2: acciones específicas de consulta de infraestructura.
   statement {
     sid    = "DescribeEc2Infrastructure"
     effect = "Allow"
@@ -91,6 +124,7 @@ data "aws_iam_policy_document" "audit_readonly_permissions" {
     resources = ["*"]
   }
 
+  # IAM: lectura de metadatos de roles del entorno.
   statement {
     sid    = "ReadIamRoleMetadata"
     effect = "Allow"
@@ -107,6 +141,7 @@ data "aws_iam_policy_document" "audit_readonly_permissions" {
     ]
   }
 
+  # S3: lectura de metadatos del bucket de datos.
   statement {
     sid    = "ReadDataBucketMetadata"
     effect = "Allow"
@@ -120,8 +155,18 @@ data "aws_iam_policy_document" "audit_readonly_permissions" {
     resources = [
       "arn:aws:s3:::${var.data_bucket_name}"
     ]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values = [
+        var.data_prefix,
+        "${var.data_prefix}/*"
+      ]
+    }
   }
 
+  # S3: lectura de objetos limitada al prefijo configurado.
   statement {
     sid    = "ReadObjectsInDataPrefix"
     effect = "Allow"
@@ -137,6 +182,10 @@ data "aws_iam_policy_document" "audit_readonly_permissions" {
 }
 
 data "aws_caller_identity" "current" {}
+
+# =========================================================
+# AUDIT - INLINE POLICY
+# =========================================================
 
 resource "aws_iam_role_policy" "audit_readonly" {
   name   = "${var.environment}-audit-readonly-policy"

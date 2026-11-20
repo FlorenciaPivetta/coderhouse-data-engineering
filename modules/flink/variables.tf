@@ -1,4 +1,3 @@
-
 terraform {
   required_providers {
     aws = {
@@ -50,6 +49,16 @@ variable "artifact_key" {
 
 variable "kinesis_stream_arn" {
   description = "ARN del stream Kinesis de entrada"
+  type        = string
+}
+
+variable "kinesis_output_stream_arn" {
+  description = "ARN del stream Kinesis de salida de Flink"
+  type        = string
+}
+
+variable "kinesis_output_stream_name" {
+  description = "Nombre del stream Kinesis de salida de Flink"
   type        = string
 }
 

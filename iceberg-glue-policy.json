@@ -1,0 +1,15 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowIcebergUpdateLakehouseTables",
+      "Effect": "Allow",
+      "Action": "glue:UpdateTable",
+      "Resource": [
+        "arn:aws:glue:us-east-2:662241429835:catalog",
+        "arn:aws:glue:us-east-2:662241429835:database/lakehouse_db",
+        "arn:aws:glue:us-east-2:662241429835:table/lakehouse_db/*"
+      ]
+    }
+  ]
+}

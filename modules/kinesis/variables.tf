@@ -13,3 +13,9 @@ variable "data_prefix" {
   type        = string
   default     = "ingesta"
 }
+
+variable "firehose_prefix" {
+  description = "S3 prefix exclusivo para los datos entregados por Firehose"
+  type        = string
+  default     = "ingesta"
+}

@@ -1,0 +1,5 @@
+{
+    "Database":  "analytics",
+    "Sql":  "CREATE MATERIALIZED VIEW mv_kinesis_events\nAUTO REFRESH YES\nAS\nSELECT\n    approximate_arrival_timestamp,\n    partition_key,\n    shard_id,\n    sequence_number,\n    JSON_PARSE(kinesis_data) AS payload\nFROM kds.\"dev-data-stream\"\nWHERE CAN_JSON_PARSE(kinesis_data);",
+    "WorkgroupName":  "redshift-dev-wg"
+}

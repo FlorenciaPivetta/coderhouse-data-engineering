@@ -1,6 +1,5 @@
-
 # ---------------------------------------------------------
-# IAM: Rol de ejecución para Amazon Managed Flink
+# IAM: Rol de ejecuciÃ³n para Amazon Managed Flink
 # ---------------------------------------------------------
 
 data "aws_caller_identity" "current" {}
@@ -65,6 +64,20 @@ resource "aws_s3_object" "flink_artifact" {
 }
 
 # ---------------------------------------------------------
+# S3: Bucket Lakehouse existente
+# ---------------------------------------------------------
+
+resource "aws_s3_bucket" "lakehouse" {
+  provider      = aws.lakehouse
+  bucket        = var.data_bucket_name
+  force_destroy = false
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+# ---------------------------------------------------------
 # S3: Versionado del bucket Lakehouse existente
 # ---------------------------------------------------------
 
@@ -107,11 +120,12 @@ resource "aws_cloudwatch_log_stream" "flink" {
 }
 
 # ---------------------------------------------------------
-# IAM: Permisos de ejecución para Flink
+# IAM: Permisos de ejecuciÃ³n para Flink
 # ---------------------------------------------------------
 
 data "aws_iam_policy_document" "flink_permissions" {
 
+  # Lectura del stream Kinesis de entrada
   statement {
     sid    = "ReadKinesisStream"
     effect = "Allow"
@@ -124,9 +138,27 @@ data "aws_iam_policy_document" "flink_permissions" {
       "kinesis:ListShards"
     ]
 
-    resources = [var.kinesis_stream_arn]
+    resources = [
+      var.kinesis_stream_arn
+    ]
   }
 
+  # Escritura en el stream Kinesis de salida
+  statement {
+    sid    = "WriteKinesisOutputStream"
+    effect = "Allow"
+
+    actions = [
+      "kinesis:PutRecord",
+      "kinesis:PutRecords"
+    ]
+
+    resources = [
+      var.kinesis_output_stream_arn
+    ]
+  }
+
+  # Lectura del artefacto de aplicaciÃ³n desde S3
   statement {
     sid    = "ReadApplicationArtifact"
     effect = "Allow"
@@ -141,6 +173,7 @@ data "aws_iam_policy_document" "flink_permissions" {
     ]
   }
 
+  # Escritura de logs en CloudWatch
   statement {
     sid    = "WriteCloudWatchLogs"
     effect = "Allow"
@@ -155,7 +188,7 @@ data "aws_iam_policy_document" "flink_permissions" {
     ]
   }
 
-  # Acceso al catalogo AWS Glue para Iceberg
+  # Acceso al catÃ¡logo AWS Glue para Iceberg
   statement {
     sid    = "AccessGlueCatalog"
     effect = "Allow"
@@ -178,7 +211,7 @@ data "aws_iam_policy_document" "flink_permissions" {
     ]
   }
 
-  # Consulta de ubicacion del bucket Lakehouse
+  # Consulta de ubicaciÃ³n del bucket Lakehouse
   statement {
     sid    = "GetLakehouseBucketLocation"
     effect = "Allow"
@@ -217,7 +250,7 @@ data "aws_iam_policy_document" "flink_permissions" {
     }
   }
 
-  # Lectura, escritura y administracion de archivos Iceberg
+  # Lectura, escritura y administraciÃ³n de archivos Iceberg
   statement {
     sid    = "WriteLakehouseObjects"
     effect = "Allow"
@@ -251,11 +284,13 @@ resource "aws_kinesisanalyticsv2_application" "flink" {
   runtime_environment    = "FLINK-1_19"
   service_execution_role = aws_iam_role.flink_execution.arn
   application_mode       = "STREAMING"
+  start_application      = false
 
   description = "Pre-entrega 4: procesamiento stateful de eventos de Kinesis"
 
   application_configuration {
 
+    # CÃ³digo de la aplicaciÃ³n
     application_code_configuration {
       code_content_type = "ZIPFILE"
 
@@ -268,20 +303,22 @@ resource "aws_kinesisanalyticsv2_application" "flink" {
       }
     }
 
+    # Variables de entorno
     environment_properties {
 
-      # Configuracion de ejecucion PyFlink
+      # ConfiguraciÃ³n de ejecuciÃ³n PyFlink
       property_group {
         property_group_id = "kinesis.analytics.flink.run.options"
 
         property_map = {
-          python  = "main.py"
-          jarfile = "flink/lib/pyflink-dependencies.jar"
+          python     = "main.py"
+          jarfile    = "flink/lib/pyflink-dependencies.jar"
           pyArchives = "flink/lib/flink-package.zip"
-       }
+          pyFiles    = "flink/lib/flink-package.zip"
+        }
       }
 
-      # Configuracion del origen Kinesis
+      # ConfiguraciÃ³n del origen Kinesis
       property_group {
         property_group_id = "InputStream0"
 
@@ -292,21 +329,33 @@ resource "aws_kinesisanalyticsv2_application" "flink" {
         }
       }
 
-      # Configuracion del catalogo Iceberg
+      # ConfiguraciÃ³n del destino Kinesis
+      property_group {
+        property_group_id = "OutputStream0"
+
+        property_map = {
+          "stream.name" = var.kinesis_output_stream_name
+          "aws.region"  = var.aws_region
+        }
+      }
+
+      # ConfiguraciÃ³n del catÃ¡logo Iceberg
       property_group {
         property_group_id = "Iceberg"
 
         property_map = {
-          "catalog.name"     = "glue_catalog"
-          "catalog.database" = "lakehouse_db"
-          "catalog.region"   = var.aws_region
-          "warehouse"        = "s3://${var.data_bucket_name}/${var.data_prefix}/"
-          "s3.region"        = "us-east-1"
-          "table.name"       = "event_window_aggregations"
+          "catalog.name"       = "glue_catalog"
+          "catalog.database"   = "lakehouse_db"
+          "catalog.region"     = var.aws_region
+          "warehouse"          = "s3://${var.data_bucket_name}/${var.data_prefix}/"
+          "s3.region"          = "us-east-1"
+          "table.name"         = "event_window_aggregations"
+          "sliding.table.name" = "event_sliding_window_aggregations"
         }
       }
     }
 
+    # ConfiguraciÃ³n de Flink
     flink_application_configuration {
 
       checkpoint_configuration {
@@ -328,6 +377,11 @@ resource "aws_kinesisanalyticsv2_application" "flink" {
         parallelism          = var.parallelism
         parallelism_per_kpu  = 1
       }
+    }
+
+    # Mantener habilitados los snapshots
+    application_snapshot_configuration {
+      snapshots_enabled = true
     }
   }
 

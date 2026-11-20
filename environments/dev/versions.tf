@@ -17,18 +17,18 @@ terraform {
   }
 }
 
-# Región principal: Flink, Kinesis y Glue
+# RegiÃ³n principal: Flink, Kinesis, Glue y Redshift
 provider "aws" {
   region = "us-east-2"
 }
 
-# Región de infraestructura de red
+# Networking existente: se conserva en us-east-1
 provider "aws" {
   alias  = "network"
   region = "us-east-1"
 }
 
-# Región del bucket S3 del Lakehouse
+# RegiÃ³n del bucket S3 del Lakehouse
 provider "aws" {
   alias  = "lakehouse"
   region = "us-east-1"

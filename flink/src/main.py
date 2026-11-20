@@ -1,4 +1,5 @@
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -6,23 +7,43 @@ from pathlib import Path
 from pyflink.common import Configuration, Types, WatermarkStrategy
 from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.table import StreamTableEnvironment
+from pyflink.table.catalog import Catalog
 
 from flink.config.application_config import (
     load_application_properties,
     get_application_property,
 )
 from flink.config.flink_config import configure_checkpoints
-from flink.src.event_parser import parse_event
+from flink.src.event_parser import safe_parse_event
+from flink.src.kinesis_sink import create_kinesis_sink
 from flink.src.kinesis_source import create_kinesis_source
+from flink.src.stateful_processor import StatefulAggregator
 from flink.src.watermarks import create_watermark_strategy
-from flink.src.window_aggregations import tumbling_window
+from flink.src.window_aggregations import tumbling_window, sliding_window
 
 
-def configure_iceberg_sink(table_env, results, application_properties):
+# Mantener referencias a los objetos Java durante la ejecución.
+_ICEBERG_CLASSLOADER = None
+_ICEBERG_FLINK_CATALOG = None
+_ICEBERG_CATALOG_LOADER = None
+
+
+def configure_iceberg_sink(
+    table_env,
+    tumbling_results,
+    sliding_results,
+    application_properties,
+    dependencies_jar,
+    statement_set,
+):
     """
-    Configura el catálogo Glue y escribe los resultados
-    de las ventanas en una tabla Iceberg.
+    Registra FlinkCatalog directamente y configura
+    la escritura de resultados en una tabla Iceberg.
     """
+
+    global _ICEBERG_CLASSLOADER
+    global _ICEBERG_FLINK_CATALOG
+    global _ICEBERG_CATALOG_LOADER
 
     iceberg_group = "Iceberg"
 
@@ -30,40 +51,47 @@ def configure_iceberg_sink(table_env, results, application_properties):
         application_properties,
         iceberg_group,
         "catalog.name",
-        "glue_catalog"
+        "glue_catalog",
     )
 
     database_name = get_application_property(
         application_properties,
         iceberg_group,
-        "catalog.database"
+        "catalog.database",
     )
 
     warehouse = get_application_property(
         application_properties,
         iceberg_group,
-        "warehouse"
+        "warehouse",
     )
 
     catalog_region = get_application_property(
         application_properties,
         iceberg_group,
         "catalog.region",
-        "us-east-2"
+        "us-east-2",
     )
 
     s3_region = get_application_property(
         application_properties,
         iceberg_group,
         "s3.region",
-        "us-east-1"
+        "us-east-1",
     )
 
     table_name = get_application_property(
         application_properties,
         iceberg_group,
         "table.name",
-        "event_window_aggregations"
+        "event_window_aggregations",
+    )
+
+    sliding_table_name = get_application_property(
+        application_properties,
+        iceberg_group,
+        "sliding.table.name",
+        "event_sliding_window_aggregations",
     )
 
     if not database_name or not warehouse:
@@ -72,127 +100,360 @@ def configure_iceberg_sink(table_env, results, application_properties):
             "catalog.database y/o warehouse."
         )
 
-    # 1. Crear catálogo Iceberg utilizando AWS Glue.
-    create_catalog_sql = f"""
-        CREATE CATALOG {catalog_name} WITH (
-            'type' = 'iceberg',
-            'catalog-type' = 'glue',
-            'warehouse' = '{warehouse}',
-            'io-impl' = 'org.apache.iceberg.aws.s3.S3FileIO',
-            'client.region' = '{catalog_region}',
-            's3.region' = '{s3_region}'
+    from pyflink.java_gateway import get_gateway
+
+    g = get_gateway()
+    jvm = g.jvm
+
+    jar = Path(dependencies_jar).resolve()
+
+    if not jar.is_file():
+        raise FileNotFoundError(
+            f"No existe el JAR de dependencias: {jar}"
         )
-    """
 
-    table_env.execute_sql(create_catalog_sql)
+    # Crear un classloader con el JAR de dependencias.
+    url = jvm.java.io.File(str(jar)).toURI().toURL()
 
-    # 2. Crear la base de datos si todavía no existe.
-    table_env.execute_sql(
-        f"""
-        CREATE DATABASE IF NOT EXISTS
-        {catalog_name}.{database_name}
-        """
+    parent = (
+        jvm.java.lang.Thread.currentThread()
+        .getContextClassLoader()
     )
 
-    # 3. Crear la tabla Iceberg particionada por tipo de evento.
-    create_table_sql = f"""
-        CREATE TABLE IF NOT EXISTS
-        {catalog_name}.{database_name}.{table_name} (
-            event_type STRING,
-            window_start BIGINT,
-            window_end BIGINT,
-            event_count BIGINT,
-            total_amount DOUBLE,
-            average_amount DOUBLE
-        )
-        PARTITIONED BY (event_type)
-        WITH (
-            'format-version' = '2',
-            'write.format.default' = 'parquet'
-        )
-    """
+    url_class = jvm.java.lang.Class.forName("java.net.URL")
 
-    table_env.execute_sql(create_table_sql)
-
-    # 4. Registrar los resultados del DataStream como vista temporal.
-    table_env.create_temporary_view(
-        "window_results",
-        results,
-        "event_type, window_start, window_end, "
-        "event_count, total_amount, average_amount"
+    urls = jvm.java.lang.reflect.Array.newInstance(
+        url_class,
+        1,
     )
 
-    # 5. Insertar los resultados en Iceberg.
-    insert_sql = f"""
-        INSERT INTO
-        {catalog_name}.{database_name}.{table_name}
-        SELECT
-            event_type,
-            window_start,
-            window_end,
-            event_count,
-            total_amount,
-            average_amount
-        FROM window_results
-    """
+    jvm.java.lang.reflect.Array.set(urls, 0, url)
 
-    table_env.execute_sql(insert_sql)
+    loader = jvm.java.net.URLClassLoader(urls, parent)
+
+    thread = jvm.java.lang.Thread.currentThread()
+    original_loader = thread.getContextClassLoader()
+
+    try:
+        thread.setContextClassLoader(loader)
+
+        # Crear configuración Hadoop.
+        config_class = jvm.java.lang.Class.forName(
+            "org.apache.hadoop.conf.Configuration",
+            True,
+            loader,
+        )
+
+        conf = config_class.newInstance()
+        conf.setClassLoader(loader)
+
+        # Configurar propiedades de Iceberg.
+        props = jvm.java.util.HashMap()
+
+        props.put("warehouse", warehouse)
+
+        props.put(
+            "io-impl",
+            "org.apache.iceberg.aws.s3.S3FileIO",
+        )
+
+        props.put("client.region", catalog_region)
+        props.put("s3.region", s3_region)
+        props.put("s3.cross-region-access-enabled", "true")
+
+        # Crear CatalogLoader para AWS Glue.
+        lc = jvm.java.lang.Class.forName(
+            "org.apache.iceberg.flink.CatalogLoader",
+            True,
+            loader,
+        )
+
+        loader_method = next(
+            method
+            for method in lc.getMethods()
+            if method.getName() == "custom"
+            and method.getParameterCount() == 4
+        )
+
+        obj = jvm.java.lang.Class.forName(
+            "java.lang.Object"
+        )
+
+        args = jvm.java.lang.reflect.Array.newInstance(
+            obj,
+            4,
+        )
+
+        values = [
+            catalog_name,
+            props,
+            conf,
+            "org.apache.iceberg.aws.glue.GlueCatalog",
+        ]
+
+        for i, value in enumerate(values):
+            jvm.java.lang.reflect.Array.set(
+                args,
+                i,
+                value,
+            )
+
+        catalog_loader = loader_method.invoke(None, args)
+
+        # Obtener Namespace.empty().
+        namespace_class = jvm.java.lang.Class.forName(
+            "org.apache.iceberg.catalog.Namespace",
+            True,
+            loader,
+        )
+
+        empty_method = next(
+            method
+            for method in namespace_class.getMethods()
+            if method.getName() == "empty"
+            and method.getParameterCount() == 0
+        )
+
+        empty_args = jvm.java.lang.reflect.Array.newInstance(
+            obj,
+            0,
+        )
+
+        namespace = empty_method.invoke(
+            None,
+            empty_args,
+        )
+
+        # Construir FlinkCatalog.
+        flink_catalog_class = jvm.java.lang.Class.forName(
+            "org.apache.iceberg.flink.FlinkCatalog",
+            True,
+            loader,
+        )
+
+        constructor = next(
+            c
+            for c in flink_catalog_class.getConstructors()
+            if c.getParameterCount() == 7
+        )
+
+        constructor_args = jvm.java.lang.reflect.Array.newInstance(
+            obj,
+            7,
+        )
+
+        values = [
+            catalog_name,
+            database_name,
+            namespace,
+            catalog_loader,
+            props,
+            True,
+            30000,
+        ]
+
+        for i, value in enumerate(values):
+            jvm.java.lang.reflect.Array.set(
+                constructor_args,
+                i,
+                value,
+            )
+
+        flink_catalog = constructor.newInstance(
+            constructor_args
+        )
+
+        # Registrar el catálogo en PyFlink.
+        table_env.register_catalog(
+            catalog_name,
+            Catalog(flink_catalog),
+        )
+
+        # Mantener referencias durante la ejecución.
+        _ICEBERG_CLASSLOADER = loader
+        _ICEBERG_FLINK_CATALOG = flink_catalog
+        _ICEBERG_CATALOG_LOADER = catalog_loader
+
+        print(
+            "Catálogos disponibles:",
+            table_env.list_catalogs(),
+        )
+
+        # La base de datos ya existe en AWS Glue.
+        print(
+            f"Base de datos Glue existente: {database_name}"
+        )
+
+        # Crear las tablas Iceberg para ambas ventanas.
+        # La tabla Tumbling existente se conserva; Sliding usa una tabla nueva.
+        window_tables = [
+            (
+                table_name,
+                tumbling_results,
+                "tumbling_window_results",
+                "Tumbling",
+            ),
+            (
+                sliding_table_name,
+                sliding_results,
+                "sliding_window_results",
+                "Sliding",
+            ),
+        ]
+
+        for target_table, window_results, view_name, window_label in window_tables:
+
+            table_env.execute_sql(
+                f"""
+                CREATE TABLE IF NOT EXISTS
+                {catalog_name}.{database_name}.{target_table} (
+                    event_type STRING,
+                    window_start BIGINT,
+                    window_end BIGINT,
+                    event_count BIGINT,
+                    total_amount DOUBLE,
+                    average_amount DOUBLE
+                )
+                PARTITIONED BY (event_type)
+                WITH (
+                    'format-version' = '2',
+                    'write.format.default' = 'parquet'
+                )
+                """
+            )
+
+            # Convertir los resultados de esta ventana en una Table.
+            results_table = table_env.from_data_stream(window_results)
+
+            # Registrar una vista temporal independiente.
+            table_env.create_temporary_view(
+                view_name,
+                results_table,
+            )
+
+            # Incorporar la escritura al mismo StatementSet.
+            statement_set.add_insert_sql(
+                f"""
+                INSERT INTO
+                {catalog_name}.{database_name}.{target_table}
+                SELECT
+                    event_type,
+                    window_start,
+                    window_end,
+                    event_count,
+                    total_amount,
+                    average_amount
+                FROM {view_name}
+                """
+            )
+
+            print(
+                f"Tabla Iceberg {window_label} configurada: "
+                f"{catalog_name}.{database_name}.{target_table}"
+            )
+
+        print(
+            "Catálogo Iceberg y tablas Tumbling/Sliding configurados."
+        )
+
+    finally:
+        # Restaurar el classloader original.
+        # No cerrar el loader: se mantiene disponible
+        # durante la ejecución del trabajo.
+        thread.setContextClassLoader(original_loader)
 
 
 def main():
 
+    # -----------------------------------------------------
     # 1. Leer propiedades de ejecución.
+    # -----------------------------------------------------
+
     application_properties = load_application_properties()
 
+    # Configuración del stream de entrada.
     input_group = "InputStream0"
 
     stream_arn = get_application_property(
         application_properties,
         input_group,
-        "stream.arn"
+        "stream.arn",
     )
 
     region = get_application_property(
         application_properties,
         input_group,
         "aws.region",
-        "us-east-1"
+        "us-east-1",
     )
 
     init_position = get_application_property(
         application_properties,
         input_group,
         "flink.source.init.position",
-        "TRIM_HORIZON"
+        "TRIM_HORIZON",
     )
 
+    # Configuración del stream de salida.
+    output_group = "OutputStream0"
+
+    output_stream_name = get_application_property(
+        application_properties,
+        output_group,
+        "stream.name",
+    )
+
+    output_region = get_application_property(
+        application_properties,
+        output_group,
+        "aws.region",
+        region,
+    )
+
+    # -----------------------------------------------------
     # 2. Configurar entorno y dependencias.
+    # -----------------------------------------------------
+
     config = Configuration()
 
     is_local = os.getenv(
         "IS_LOCAL",
-        "false"
+        "false",
     ).lower() == "true"
 
-    # Configurar intérprete Python solamente en ejecución local.
     if is_local:
+
         config.set_string(
             "python.executable",
-            sys.executable
+            sys.executable,
         )
 
         config.set_string(
             "python.client.executable",
-            sys.executable
+            sys.executable,
         )
 
-    # Localizar el JAR de dependencias.
+    # -----------------------------------------------------
+    # 3. Localizar el JAR de dependencias.
+    # -----------------------------------------------------
+
     script_dir = Path(__file__).resolve().parent
 
     jar_candidates = [
+        # Estructura del ZIP desplegado en Managed Flink:
+        # main.py está en la raíz y las dependencias en flink/lib/.
         script_dir / "flink" / "lib",
-        script_dir.parent / "flink" / "lib",
+
+        # flink/lib/ cuando main.py se ejecuta desde flink/src/
+        script_dir.parent / "lib",
+
+        # target/ del proyecto
+        script_dir.parent.parent / "target",
+
+        # lib/ junto a main.py
         script_dir / "lib",
+
+        # Directorio de Flink en AWS
         Path("/opt/flink/lib"),
     ]
 
@@ -200,9 +461,11 @@ def main():
         (
             directory / "pyflink-dependencies.jar"
             for directory in jar_candidates
-            if (directory / "pyflink-dependencies.jar").is_file()
+            if (
+                directory / "pyflink-dependencies.jar"
+            ).is_file()
         ),
-        None
+        None,
     )
 
     if dependencies_jar is None:
@@ -211,39 +474,58 @@ def main():
             f"Ubicaciones revisadas: {jar_candidates}"
         )
 
-    # Incorporar dependencias solamente en ejecución local.
+    print(
+        f"JAR de dependencias encontrado: {dependencies_jar}"
+    )
+
+    jar_uri = dependencies_jar.resolve().as_uri()
+
+    # En Managed Flink, el JAR se carga mediante jarfile.
+    # Solo en ejecución local se agrega explícitamente.
     if is_local:
-        jar_uri = dependencies_jar.resolve().as_uri()
 
         config.set_string(
             "pipeline.jars",
-            jar_uri
+            jar_uri,
         )
 
-        config.set_string(
-            "pipeline.classpaths",
-            jar_uri
-        )
+    # -----------------------------------------------------
+    # 4. Crear entorno Flink.
+    # -----------------------------------------------------
 
-    # 3. Crear entorno Flink.
-    env = StreamExecutionEnvironment.get_execution_environment(config)
+    env = StreamExecutionEnvironment.get_execution_environment(
+        config
+    )
+
     env.set_parallelism(1)
 
-    # 4. Configurar checkpoints.
+    # -----------------------------------------------------
+    # 5. Configurar checkpoints.
+    # -----------------------------------------------------
+
     configure_checkpoints(env)
 
-    # 5. Seleccionar origen de datos.
+    # -----------------------------------------------------
+    # 6. Seleccionar origen de datos.
+    # -----------------------------------------------------
+
     source_mode = os.getenv("FLINK_SOURCE")
 
     if source_mode is None:
-        source_mode = "kinesis" if stream_arn else "local"
+
+        source_mode = (
+            "kinesis" if stream_arn else "local"
+        )
 
     source_mode = source_mode.lower()
 
     if source_mode == "kinesis":
 
         if not stream_arn:
-            stream_arn = os.getenv("KINESIS_STREAM_ARN")
+
+            stream_arn = os.getenv(
+                "KINESIS_STREAM_ARN"
+            )
 
         if not stream_arn:
             raise ValueError(
@@ -251,19 +533,22 @@ def main():
                 "Configurá stream.arn en InputStream0."
             )
 
-        region = os.getenv("AWS_REGION", region)
+        region = os.getenv(
+            "AWS_REGION",
+            region,
+        )
 
         kinesis_source = create_kinesis_source(
             stream_arn=stream_arn,
             region=region,
-            init_position=init_position
+            init_position=init_position,
         )
 
         source = env.from_source(
             kinesis_source,
             WatermarkStrategy.no_watermarks(),
             "Amazon-Kinesis-Source",
-            Types.STRING()
+            Types.STRING(),
         )
 
         job_name = "Preentrega5-Flink-Kinesis"
@@ -278,53 +563,191 @@ def main():
 
         source = env.from_collection(
             raw_events,
-            type_info=Types.STRING()
+            type_info=Types.STRING(),
         )
 
         job_name = "Preentrega5-Flink-Local"
 
     else:
-        raise ValueError(f"Origen no reconocido: {source_mode}")
 
-    # 6. Deserializar y validar eventos.
+        raise ValueError(
+            f"Origen no reconocido: {source_mode}"
+        )
+
+    # -----------------------------------------------------
+    # 7. Deserializar y validar eventos.
+    # -----------------------------------------------------
+
     parsed_stream = source.map(
-        parse_event,
-        output_type=Types.PICKLED_BYTE_ARRAY()
+        safe_parse_event,
+        output_type=Types.PICKLED_BYTE_ARRAY(),
     )
 
-    # 7. Asignar Event Time y Watermarks.
-    timestamped_stream = parsed_stream.assign_timestamps_and_watermarks(
-        create_watermark_strategy()
+    # -----------------------------------------------------
+    # 8. Descartar eventos inválidos.
+    # -----------------------------------------------------
+
+    valid_stream = parsed_stream.filter(
+        lambda event: event is not None
     )
 
-    # 8. Aplicar ventana Tumbling de un minuto.
-    results = tumbling_window(timestamped_stream)
+    # -----------------------------------------------------
+    # 9. Rama original de Event Time y Watermarks.
+    # -----------------------------------------------------
 
-    # 9. Seleccionar destino de los resultados.
+    timestamped_stream = (
+        valid_stream.assign_timestamps_and_watermarks(
+            create_watermark_strategy()
+        )
+    )
+
+    # -----------------------------------------------------
+    # 10. Aplicar ventana Tumbling de un minuto.
+    # -----------------------------------------------------
+
+    tumbling_results = tumbling_window(timestamped_stream)
+    sliding_results = sliding_window(timestamped_stream)
+
+    # -----------------------------------------------------
+    # 11. Rama adicional de procesamiento con estado.
+    # -----------------------------------------------------
+
+    # Acumula eventos por event_type utilizando ValueState
+    # y TTL de 24 horas basado en Processing Time.
+
+    stateful_results = (
+        valid_stream
+        .key_by(lambda event: event["event_type"])
+        .process(
+            StatefulAggregator(),
+            output_type=Types.PICKLED_BYTE_ARRAY(),
+        )
+    )
+
+    # -----------------------------------------------------
+    # 12. Seleccionar destino.
+    # -----------------------------------------------------
+
     sink_mode = os.getenv(
         "FLINK_SINK",
-        "iceberg" if source_mode == "kinesis" else "print"
+        "iceberg" if source_mode == "kinesis" else "print",
     ).lower()
+
+    # -----------------------------------------------------
+    # MODO PRINT: pruebas locales.
+    # -----------------------------------------------------
 
     if sink_mode == "print":
 
-        results.print()
+        stateful_results.print(
+            "Stateful Aggregation Results"
+        )
+
+        tumbling_results.print(
+            "Tumbling Window Results"
+        )
+
+        sliding_results.print(
+            "Sliding Window Results"
+        )
+
         env.execute(job_name)
+
+    # -----------------------------------------------------
+    # MODO ICEBERG: procesamiento en AWS.
+    # -----------------------------------------------------
 
     elif sink_mode == "iceberg":
 
+        # Rama 1: resultados stateful hacia Kinesis.
+        if output_stream_name:
+
+            # Convertir los diccionarios a JSON.
+            stateful_json = stateful_results.map(
+                lambda result: json.dumps(
+                    result,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+                output_type=Types.STRING(),
+            )
+
+            # Construir el sink de Kinesis.
+            kinesis_sink = create_kinesis_sink(
+                stream_name=output_stream_name,
+                region=output_region,
+            )
+
+            # Conectar la salida stateful con Kinesis.
+            stateful_json.sink_to(
+                kinesis_sink
+            ).name(
+                "Stateful-Kinesis-Sink"
+            )
+
+            print(
+                f"Stateful sink configurado: "
+                f"{output_stream_name} ({output_region})"
+            )
+
+        else:
+
+            # Compatibilidad mientras no exista OutputStream0.
+            stateful_results.print(
+                "Stateful Aggregation Results"
+            )
+
+            print(
+                "ADVERTENCIA: OutputStream0 no configurado. "
+                "Los resultados stateful solo se imprimen."
+            )
+
+        # Rama 2: resultados de ventanas hacia Iceberg.
         table_env = StreamTableEnvironment.create(env)
+        statement_set = table_env.create_statement_set()
 
         configure_iceberg_sink(
             table_env,
-            results,
-            application_properties
+            tumbling_results,
+            sliding_results,
+            application_properties,
+            dependencies_jar,
+            statement_set,
         )
 
-        # INSERT INTO envía el trabajo de streaming a Flink.
-        # No ejecutar env.execute() nuevamente.
+
+        # Mantener el classloader de Iceberg durante la planificación
+        # y ejecución del trabajo.
+        from pyflink.java_gateway import get_gateway
+
+        jvm = get_gateway().jvm
+        thread = jvm.java.lang.Thread.currentThread()
+        original_loader = thread.getContextClassLoader()
+
+        if _ICEBERG_CLASSLOADER is None:
+            raise RuntimeError(
+                "No se inicializó el classloader de Iceberg."
+            )
+
+        try:
+            thread.setContextClassLoader(_ICEBERG_CLASSLOADER)
+
+            # Integrar Table API al entorno DataStream.
+            statement_set.attach_as_datastream()
+
+            print(
+                "Ramas Kinesis e Iceberg integradas en el mismo entorno Flink."
+            )
+
+            # Ejecutar ambas ramas en un único trabajo.
+            env.execute(job_name)
+
+        finally:
+            thread.setContextClassLoader(original_loader)
+
 
     else:
+
         raise ValueError(
             f"Destino no reconocido: {sink_mode}. "
             "Usá 'print' o 'iceberg'."

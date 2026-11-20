@@ -1,44 +1,33 @@
 
-resource "aws_cloudwatch_metric_alarm" "read_throughput" {
-  alarm_name          = "${var.environment}-kinesis-read-throttle"
-  alarm_description   = "Kinesis stream read throughput exceeded"
-  namespace           = "AWS/Kinesis"
-  metric_name         = "ReadProvisionedThroughputExceeded"
-  statistic           = "Sum"
-  period              = 60
-  evaluation_periods  = 1
-  threshold           = 0
+# =========================================================
+# CLOUDWATCH - KINESIS MONITORING
+# =========================================================
+
+resource "aws_cloudwatch_metric_alarm" "iterator_age" {
+  alarm_name        = "${var.environment}-kinesis-iterator-age"
+  alarm_description = "Kinesis consumer is falling behind the stream"
+
+  namespace   = "AWS/Kinesis"
+  metric_name = "GetRecords.IteratorAgeMilliseconds"
+
+  statistic = "Maximum"
+  period    = 60
+
+  evaluation_periods  = 2
+  datapoints_to_alarm = 2
+
+  threshold           = 300000
   comparison_operator = "GreaterThanThreshold"
-  treat_missing_data  = "notBreaching"
+
+  treat_missing_data = "notBreaching"
 
   dimensions = {
-    StreamName = aws_kinesis_stream.this.name
+    StreamName = aws_kinesis_stream.input.name
   }
 
   tags = {
     Environment = var.environment
     ManagedBy   = "Terraform"
-  }
-}
-
-resource "aws_cloudwatch_metric_alarm" "write_throughput" {
-  alarm_name          = "${var.environment}-kinesis-write-throttle"
-  alarm_description   = "Kinesis stream write throughput exceeded"
-  namespace           = "AWS/Kinesis"
-  metric_name         = "WriteProvisionedThroughputExceeded"
-  statistic           = "Sum"
-  period              = 60
-  evaluation_periods  = 1
-  threshold           = 0
-  comparison_operator = "GreaterThanThreshold"
-  treat_missing_data  = "notBreaching"
-
-  dimensions = {
-    StreamName = aws_kinesis_stream.this.name
-  }
-
-  tags = {
-    Environment = var.environment
-    ManagedBy   = "Terraform"
+    Project     = "coderhouse-data-engineering"
   }
 }

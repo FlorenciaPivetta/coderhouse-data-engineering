@@ -1,0 +1,10 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "kinesis:ListTagsForStream",
+      "Resource": "arn:aws:kinesis:us-east-2:662241429835:stream/dev-data-stream"
+    }
+  ]
+}

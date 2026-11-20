@@ -1,4 +1,3 @@
-
 <assembly xmlns="http://maven.apache.org/ASSEMBLY/2.2.0"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.2.0
@@ -18,17 +17,27 @@
         <fileSet>
             <directory>${project.basedir}/flink</directory>
             <outputDirectory>flink</outputDirectory>
+
             <includes>
-                 <include>__init__.py</include>
-                 <include>src/**/*.py</include>
-                 <include>config/**/*.py</include>
+                <include>__init__.py</include>
+                <include>src/**/*.py</include>
+                <include>config/**/*.py</include>
             </includes>
+
+            <excludes>
+                <exclude>src/**/*backup*</exclude>
+                <exclude>src/**/*before*</exclude>
+                <exclude>src/**/*.bak</exclude>
+                <exclude>src/**/__pycache__/**</exclude>
+                <exclude>src/**/*.pyc</exclude>
+            </excludes>
         </fileSet>
 
         <!-- Script principal -->
         <fileSet>
             <directory>${project.basedir}/flink/src</directory>
             <outputDirectory></outputDirectory>
+
             <includes>
                 <include>main.py</include>
             </includes>
@@ -38,6 +47,7 @@
         <fileSet>
             <directory>${project.build.directory}</directory>
             <outputDirectory>flink/lib</outputDirectory>
+
             <includes>
                 <include>pyflink-dependencies.jar</include>
             </includes>
@@ -47,10 +57,12 @@
         <fileSet>
             <directory>${project.build.directory}</directory>
             <outputDirectory>flink/lib</outputDirectory>
+
             <includes>
                 <include>flink-package.zip</include>
             </includes>
         </fileSet>
+
     </fileSets>
 
 </assembly>
