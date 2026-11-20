@@ -1,4 +1,3 @@
-
 terraform {
   required_version = ">= 1.6.0"
 
@@ -18,18 +17,18 @@ terraform {
   }
 }
 
-# RegiÃ³n principal: Flink, Kinesis y Glue
+# Región principal: Flink, Kinesis y Glue
 provider "aws" {
   region = "us-east-2"
 }
 
-# RegiÃ³n de infraestructura de red
+# Región de infraestructura de red
 provider "aws" {
   alias  = "network"
   region = "us-east-1"
 }
 
-# RegiÃ³n del bucket S3 del Lakehouse
+# Región del bucket S3 del Lakehouse
 provider "aws" {
   alias  = "lakehouse"
   region = "us-east-1"

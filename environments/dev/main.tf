@@ -1,4 +1,3 @@
-
 module "network" {
   source = "../../modules/network"
 
@@ -29,7 +28,9 @@ module "identity" {
 module "kinesis" {
   source = "../../modules/kinesis"
 
-  environment = var.environment
+  environment      = var.environment
+  data_bucket_name = var.data_bucket_name
+  data_prefix      = var.data_prefix
 }
 
 module "flink" {

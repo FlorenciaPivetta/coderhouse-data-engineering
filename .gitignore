@@ -1,16 +1,20 @@
-
 # Terraform: estado y archivos locales
 .terraform/
 *.tfstate
 *.tfstate.*
 crash.log
 crash.*.log
+tfplan
+*.plan
+*.tfplan
+*.tfplan.*
 
 # Variables que pueden contener secretos
 *.tfvars
 *.tfvars.json
 *.auto.tfvars
 *.auto.tfvars.json
+.env
 
 # Overrides locales
 override.tf
@@ -31,35 +35,33 @@ config.local
 .DS_Store
 Thumbs.db
 
-tfplan
-*.plan
-
-# Entornos virtuales de Python
+# Python y entornos virtuales
 .venv/
 .venv-linux/
+.venv311/
+venv/
 __pycache__/
 *.py[cod]
+*$py.class
 
-# Archivos generados por Maven
+# Maven y PyFlink
 target/
+.tmp-maven/
 dependency-reduced-pom.xml
-
-# PyFlink: archivos locales de ejecucion
 flink/checkpoints/
 flink/output/
 
-# Planes de Terraform
-*.tfplan
-*.tfplan.*
-
 # Backups locales
 *_backup.md
+*.backup
 *.bak
+*.backup-*
+*.bak-*
 
-# Planes de Terraform
-*.tfplan
-*.tfplan.*
+# Artefactos ZIP generados localmente
+environments/dev/flink-deployed-v*.zip
+flink-artifact-s3-version.zip
 
-# Backups locales
-*_backup.md
-*.bak
+# Configuraciones locales de ejecución
+environments/dev/run-configuration.json
+run-configuration.json

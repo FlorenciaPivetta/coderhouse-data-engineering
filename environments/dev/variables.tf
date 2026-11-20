@@ -1,6 +1,5 @@
-
 variable "aws_region" {
-  description = "Region de AWS donde se desplegara la infraestructura"
+  description = "Región principal de AWS para Flink, Kinesis y Glue"
   type        = string
   default     = "us-east-2"
 }
@@ -30,13 +29,13 @@ variable "data_bucket_name" {
 }
 
 variable "data_prefix" {
-  description = "Prefijo de S3 al que accederÃ¡ el servicio"
+  description = "Prefijo de S3 al que accederá el servicio"
   type        = string
   default     = "lakehouse"
 }
 
 variable "audit_principal_arn" {
-  description = "ARN del principal autorizado a asumir el rol de auditorÃ­a"
+  description = "ARN del principal autorizado a asumir el rol de auditoría"
   type        = string
 }
 

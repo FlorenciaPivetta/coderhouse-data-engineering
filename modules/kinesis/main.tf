@@ -1,21 +1,17 @@
-data "aws_iam_policy_document" "firehose_assume_role" {
-  statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRole"]
+resource "aws_kinesis_stream" "this" {
+  name             = "${var.environment}-data-stream"
+  shard_count      = 2
+  retention_period = 24
+  encryption_type  = "KMS"
+  kms_key_id       = "alias/aws/kinesis"
 
-    principals {
-      type        = "Service"
-      identifiers = ["firehose.amazonaws.com"]
-    }
+  stream_mode_details {
+    stream_mode = "PROVISIONED"
   }
-}
-
-resource "aws_iam_role" "firehose" {
-  name               = "${var.environment}-firehose-delivery-role"
-  assume_role_policy = data.aws_iam_policy_document.firehose_assume_role.json
 
   tags = {
     Environment = var.environment
     ManagedBy   = "Terraform"
+    Project     = "coderhouse-data-engineering"
   }
 }
