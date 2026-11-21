@@ -282,15 +282,35 @@ def read_table(table_env):
         """
     )
 
-    total_rows = 0
+    rows = []
 
-    with result.collect() as rows:
-        for row in rows:
+    with result.collect() as records:
+        for row in records:
             print(row)
-            total_rows += 1
+            rows.append(tuple(row))
 
-    print(f"Total de filas leídas: {total_rows}")
+    expected_rows = {
+        ("click", 1799990000000, 1799990060000, 5, 25.0, 5.0),
+        ("click", 1800000000000, 1800000300000, 3, 30.0, 10.0),
+        ("click", 1800000060000, 1800000360000, 5, 75.0, 15.0),
+    }
 
+    assert len(rows) == 3, (
+        f"Se esperaban 3 filas y se encontraron {len(rows)}"
+    )
+
+    assert len(set(rows)) == len(rows), (
+        "Se encontraron filas duplicadas"
+    )
+
+    assert set(rows) == expected_rows, (
+        f"Los resultados no coinciden.\n"
+        f"Esperados: {expected_rows}\n"
+        f"Obtenidos: {set(rows)}"
+    )
+
+    print(f"Total de filas leidas: {len(rows)}")
+    print("VALIDACION EXITOSA: UPSERT y resultados correctos.")
 
 def main():
     parser = argparse.ArgumentParser()

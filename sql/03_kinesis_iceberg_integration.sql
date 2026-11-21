@@ -26,7 +26,7 @@ LEFT JOIN (
         SUM(total_amount) AS historical_total_amount,
         SUM(total_amount) / NULLIF(SUM(event_count), 0)
             AS historical_average_amount
-    FROM lakehouse.event_window_aggregations
+    FROM lakehouse.event_window_aggregations_upsert
     GROUP BY event_type
 ) h
     ON k.payload.event_type::VARCHAR = h.event_type

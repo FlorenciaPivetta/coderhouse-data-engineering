@@ -284,40 +284,62 @@ def configure_iceberg_sink(
             f"Base de datos Glue existente: {database_name}"
         )
 
-        # Crear las tablas Iceberg para ambas ventanas.
-        # La tabla Tumbling existente se conserva; Sliding usa una tabla nueva.
+        # Crear tablas nuevas para UPSERT sin modificar las tablas originales.
+        # La clave lógica identifica una ventana por tipo y límites temporales.
+        def upsert_table_name(base_name):
+            suffix = "_upsert"
+            return (
+                base_name
+                if base_name.endswith(suffix)
+                else f"{base_name}{suffix}"
+            )
+
         window_tables = [
             (
-                table_name,
+                upsert_table_name(table_name),
                 tumbling_results,
-                "tumbling_window_results",
+                "tumbling_window_results_upsert",
                 "Tumbling",
+                table_name,
             ),
             (
-                sliding_table_name,
+                upsert_table_name(sliding_table_name),
                 sliding_results,
-                "sliding_window_results",
+                "sliding_window_results_upsert",
                 "Sliding",
+                sliding_table_name,
             ),
         ]
 
-        for target_table, window_results, view_name, window_label in window_tables:
+        for (
+            target_table,
+            window_results,
+            view_name,
+            window_label,
+            original_table,
+        ) in window_tables:
 
             table_env.execute_sql(
                 f"""
                 CREATE TABLE IF NOT EXISTS
                 {catalog_name}.{database_name}.{target_table} (
-                    event_type STRING,
-                    window_start BIGINT,
-                    window_end BIGINT,
+                    event_type STRING NOT NULL,
+                    window_start BIGINT NOT NULL,
+                    window_end BIGINT NOT NULL,
                     event_count BIGINT,
                     total_amount DOUBLE,
-                    average_amount DOUBLE
+                    average_amount DOUBLE,
+                    PRIMARY KEY (
+                        event_type,
+                        window_start,
+                        window_end
+                    ) NOT ENFORCED
                 )
                 PARTITIONED BY (event_type)
                 WITH (
                     'format-version' = '2',
-                    'write.format.default' = 'parquet'
+                    'write.format.default' = 'parquet',
+                    'write.upsert.enabled' = 'true'
                 )
                 """
             )
@@ -348,8 +370,9 @@ def configure_iceberg_sink(
             )
 
             print(
-                f"Tabla Iceberg {window_label} configurada: "
-                f"{catalog_name}.{database_name}.{target_table}"
+                f"Tabla Iceberg {window_label} configurada para UPSERT: "
+                f"{catalog_name}.{database_name}.{target_table} "
+                f"(tabla anterior conservada: {original_table})"
             )
 
         print(

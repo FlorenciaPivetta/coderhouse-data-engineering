@@ -33,7 +33,7 @@ GRANT ROLE analytics_role TO analytics_user;
 -- Permisos de lectura sobre la fuente externa Iceberg.
 GRANT USAGE ON SCHEMA lakehouse TO ROLE analytics_role;
 
-GRANT SELECT ON TABLE lakehouse.event_window_aggregations
+GRANT SELECT ON TABLE lakehouse.event_window_aggregations_upsert
 TO ROLE analytics_role;
 
 -- Validación descrita en el PDF:
